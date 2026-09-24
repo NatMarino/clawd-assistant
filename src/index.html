@@ -1138,7 +1138,8 @@
   function eggState() {
     if (setup.stage === 'ready') return 'egg_ready';
     // set up the other way (a Claude chat followed SETUP.md): he's ready too
-    if (setup.stage === 'egg' && inbox && inbox.last_heard_ms != null && !brainOk) return 'egg_ready';
+    // (unless you chose Start over: then setup runs inside him, from scratch)
+    if (setup.stage === 'egg' && !setup.fresh && inbox && inbox.last_heard_ms != null && !brainOk) return 'egg_ready';
     if (setup.crack >= 3) return 'egg_ready';
     if (setup.crack === 2) return 'egg_crack2';
     if (setup.stage === 'running') return 'egg_crack1';
@@ -1531,7 +1532,7 @@
     closeAsk();
     finishPanel(null);
     hatched = false;
-    setup = { stage: 'egg', crack: 0, summary: null };
+    setup = { stage: 'egg', crack: 0, summary: null, fresh: true };
     saveSetup();
     try { localStorage.removeItem('hatched'); } catch {}
     introRecord = {};
@@ -2406,12 +2407,36 @@
     tick();
     if (pet.state === 'wave' && derived && derived.state === 'idle') setState('idle');
     if (hatched) setTimeout(bootHello, 1200);
+    if (hatched) setTimeout(offerTakeOver, 20000);
   }, 1875);
 
   setInterval(tick, 1000);
 
   // Once hatched: sometimes a short hello when he starts up (never the same
   // twice in a row, and not outside work hours)
+  // Set up the fallback way (Cowork runs his checks) but able to run the big
+  // brain himself here? Offer to take over: lighter, and his own chat.
+  async function offerTakeOver() {
+    if (!IS_TAURI || !brain || brainOk || !hatched) return;
+    let asked = '';
+    try { asked = localStorage.getItem('takeOverAsked') || ''; } catch {}
+    if (asked === today()) return;
+    let st;
+    try { st = await brain.status(); } catch { return; }
+    if (!st || !st.ready) return;
+    try { localStorage.setItem('takeOverAsked', today()); } catch {}
+    const r = await panel({ title: 'I can do my own check-ins now!', sub: 'I’d use the big brain myself: lighter on your plan, and you can ask me things right here. Want me to?',
+      buttons: [{ label: 'Yes please', primary: true }, { label: 'Not now' }], speak: 'I can do my own check-ins now! Want me to?' });
+    if (!r || r.button !== 'Yes please') return;
+    setBrainOk(true);
+    await okApps(st);
+    await loadPrefs();
+    await sayAndWait('Yay! I’ll take it from here.');
+    await panel({ title: 'One last thing', sub: 'In the Claude app, delete the Cowork scheduled tasks called “Claw’d sweep” and “Claw’d rundown”, so we don’t both check.',
+      buttons: [{ label: 'Done', primary: true }] });
+    runSweep();
+  }
+
   async function bootHello() {
     await loadPrefs();
     if (prefs && !inWorkHours()) return;
