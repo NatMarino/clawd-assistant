@@ -201,10 +201,31 @@ fn taskbar_range(tb: &taskbar::Taskbar, pet_scale: f64, sf: f64) -> (f64, f64, f
     (min, max, home)
 }
 
-/// Stand him on the taskbar with his centre at `center_x` (clamped to the
-/// walkable range), or at home when None.
+/// His centre and feet on screen right now (physical px).
+fn buddy_point(win: &tauri::WebviewWindow, state: &AppState) -> Option<(f64, f64)> {
+    let pos = win.outer_position().ok()?;
+    let sf = win.scale_factor().unwrap_or(1.0);
+    let s = state.cfg.lock_or_recover().scale.clamp(0.5, 3.0);
+    let (ax, ay) = anchor(state, s, sf);
+    Some((pos.x as f64 + ax, pos.y as f64 + ay))
+}
+
+/// The ground of the display he's on (or of the point he's being put at).
+fn ground(win: &tauri::WebviewWindow, state: &AppState, at: Option<(f64, f64)>) -> Option<taskbar::Taskbar> {
+    let (x, y) = at.or_else(|| buddy_point(win, state))?;
+    taskbar::query_at(win, x, y)
+}
+
+/// Stand him on the taskbar of the display he's on, with his centre at
+/// `center_x` (clamped to the walkable range), or at that display's home
+/// when None.
 fn place_on_taskbar(win: &tauri::WebviewWindow, state: &AppState, center_x: Option<f64>) -> bool {
-    let Some(tb) = taskbar::query() else { return false };
+    let here = buddy_point(win, state);
+    let at = match (center_x, here) {
+        (Some(cx), Some((_, fy))) => Some((cx, fy)),
+        _ => here,
+    };
+    let Some(tb) = ground(win, state, at) else { return false };
     let sf = win.scale_factor().unwrap_or(1.0);
     let s = state.cfg.lock_or_recover().scale.clamp(0.5, 3.0);
     let (min, max, home) = taskbar_range(&tb, s, sf);
@@ -230,11 +251,15 @@ struct TaskbarInfo {
     home_x: f64,
     /// physical px per CSS px, for turning distances into walking time
     sf: f64,
+    /// which display he's on: its index, name, and whether it's the main one
+    display: usize,
+    display_name: String,
+    primary: bool,
 }
 
 #[tauri::command]
 fn taskbar_info(window: tauri::WebviewWindow, state: tauri::State<AppState>) -> Option<TaskbarInfo> {
-    let tb = taskbar::query()?;
+    let tb = ground(&window, &state, None)?;
     let sf = window.scale_factor().unwrap_or(1.0);
     let (s, on) = {
         let cfg = state.cfg.lock_or_recover();
@@ -242,7 +267,17 @@ fn taskbar_info(window: tauri::WebviewWindow, state: tauri::State<AppState>) -> 
     };
     let pos = window.outer_position().ok()?;
     let (min_x, max_x, home_x) = taskbar_range(&tb, s, sf);
-    Some(TaskbarInfo { on, center_x: pos.x as f64 + anchor(&state, s, sf).0, min_x, max_x, home_x, sf })
+    Some(TaskbarInfo {
+        on,
+        center_x: pos.x as f64 + anchor(&state, s, sf).0,
+        min_x,
+        max_x,
+        home_x,
+        sf,
+        display: tb.display,
+        display_name: tb.display_name,
+        primary: tb.primary,
+    })
 }
 
 /// Put him (back) on the taskbar: at `center_x`, or at home.
@@ -256,7 +291,7 @@ fn go_to_taskbar(window: tauri::WebviewWindow, state: tauri::State<AppState>, ce
 /// how long it will take (ms); the poller emits "walk-done" on arrival.
 #[tauri::command]
 fn walk_to(window: tauri::WebviewWindow, state: tauri::State<AppState>, center_x: f64, speed: f64) -> f64 {
-    let Some(tb) = taskbar::query() else { return 0.0 };
+    let Some(tb) = ground(&window, &state, None) else { return 0.0 };
     let Ok(pos) = window.outer_position() else { return 0.0 };
     let sf = window.scale_factor().unwrap_or(1.0);
     let s = state.cfg.lock_or_recover().scale.clamp(0.5, 3.0);
@@ -496,7 +531,7 @@ fn start_drag(window: tauri::WebviewWindow, state: tauri::State<AppState>, x: f6
 #[tauri::command]
 fn end_drag(window: tauri::WebviewWindow, state: tauri::State<AppState>) -> bool {
     *state.drag.lock_or_recover() = None;
-    let (Some(tb), Ok(pos)) = (taskbar::query(), window.outer_position()) else {
+    let (Some(tb), Ok(pos)) = (ground(&window, &state, None), window.outer_position()) else {
         state.cfg.lock_or_recover().on_taskbar = false;
         return false;
     };

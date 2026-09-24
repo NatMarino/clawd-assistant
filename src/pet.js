@@ -32,6 +32,10 @@ const MOTIONS = {
   work:    (t) => ({ dx: Math.round(Math.sin(t * 3)), dy: -Math.round(Math.abs(Math.sin(t * 8)) * 2) }),
   // walking (the stand-in until the walk cycle is drawn): a quick springy bob
   walk:    (t) => ({ dx: 0, dy: -Math.round(Math.abs(Math.sin(t * 7)) * 3) }),
+  // held in the air: a dangle, swinging side to side, legs kicking a little
+  swing:   (t) => ({ dx: Math.round(Math.sin(t * 6) * 4), dy: -Math.round(Math.abs(Math.sin(t * 12)) * 2) }),
+  // shaking himself off after a tumble: fast and small, like a wet dog
+  shake:   (t) => ({ dx: Math.round(Math.sin(t * 45) * 3), dy: 0 }),
   hopOnce: (t) => ({ dx: 0, dy: t < 0.55 ? -Math.round(Math.sin((t / 0.55) * Math.PI) * 8) : 0 }),
 };
 

@@ -481,6 +481,7 @@
     tucked: false, walking: false, busy: false, dragging: false, hovering: false,
     facing: 1,             // 1 right, -1 left (the walk is drawn facing right)
     calmSince: Date.now(), nextPeek: 0, nextStroll: 0,
+    tilt: 0, carried: null, lastDisplay: null,
     releaseWalk: null, onArrive: null,
   };
   // true while the launch wave plays: nothing else takes the stage until
@@ -968,6 +969,7 @@
   function applyCanvasTransform() {
     const parts = [];
     if (life.tucked) parts.push(`translateY(${TUCK_UNITS * pet.scale}px)`);
+    if (life.tilt) parts.push(`rotate(${life.tilt}deg)`);
     canvas.style.transform = parts.join(' ');
   }
 
@@ -1013,10 +1015,20 @@
     if (instant) requestAnimationFrame(() => requestAnimationFrame(() => canvas.classList.remove('snap')));
   }
 
+  const NEW_SCREEN = ['Ooh, a new screen!', 'Wheee, a different screen!', 'Oh! Where am I? I like it here.'];
   async function refreshTaskbar() {
     if (!IS_TAURI) return;
     try { life.tb = await invoke('taskbar_info'); } catch { life.tb = null; }
     layoutWrap();
+    // which display he's on; moving him to another one gets a comment
+    if (life.tb) {
+      const here = `${life.tb.display}:${life.tb.display_name}`;
+      if (life.lastDisplay && here !== life.lastDisplay && hatched && !life.walking) {
+        plog('new display ' + here);
+        setTimeout(() => voice.say(NEW_SCREEN[Math.floor(Math.random() * NEW_SCREEN.length)]), 1400);
+      }
+      life.lastDisplay = here;
+    }
   }
 
   function lifeTick(now) {
@@ -1115,6 +1127,49 @@
         }, between([2500, 5000]));
       });
     }, 600);
+  }
+
+  // --- picked up and put down ---------------------------------------
+  // Grabbed: he flails, dangling and swinging, with a surprised "whee!".
+  // Let go: he doesn't land on his feet. He topples onto his side with an
+  // "oof", lies there a beat, then gets up, shakes himself off, and chirps
+  // like nothing happened. (The egg just gets rocked, and rocks back.)
+  function pickUp() {
+    plog('picked up');
+    if (!hatched) { voice.chirp(null, 'muffled'); return; }
+    if (life.carried) life.carried();
+    life.carried = hold('held', true);
+    voice.chirp(4, 'up');
+  }
+
+  const sleepFor = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function putDown() {
+    if (!hatched) return;
+    const release = life.carried;
+    life.carried = null;
+    if (release) release();
+    const fall = hold('idle', true);
+    // topple: a quick fall onto his side, pivoting on his feet
+    canvas.style.transformOrigin = `50% ${FEET_UNIT / 160 * 100}%`;
+    canvas.style.transition = 'transform .16s ease-in';
+    life.tilt = Math.random() < 0.5 ? -88 : 88;
+    applyCanvasTransform();
+    await sleepFor(170);
+    voice.chirp(2, 'flat'); // oof
+    await sleepFor(650);
+    // back up, with a little bounce
+    canvas.style.transition = 'transform .3s cubic-bezier(.34, 1.56, .64, 1)';
+    life.tilt = 0;
+    applyCanvasTransform();
+    await sleepFor(320);
+    canvas.style.transition = '';
+    // and shake it off
+    if (fall) fall();
+    const shake = hold('shake_off', true);
+    voice.chirp(null, 'light');
+    await sleepFor(550);
+    if (shake) shake();
+    voice.chirp(null, 'happy');
   }
 
   // rise up from behind the bar (the peek clip does its own rising), look
@@ -2489,7 +2544,7 @@
     let down = null, dragging = false;
     const clear = () => { down = null; dragging = false; };
     const endDrag = () => {
-      if (dragging) invoke('end_drag').then(refreshTaskbar);
+      if (dragging) { putDown(); invoke('end_drag').then(refreshTaskbar); }
       life.dragging = false;
       clear();
     };
@@ -2507,6 +2562,7 @@
         life.dragging = true;
         if (life.walking) stopWalking();
         setTuck(false, true);
+        pickUp();
         const dpr = window.devicePixelRatio || 1;
         invoke('start_drag', { x: down.x * dpr, y: down.y * dpr });
       }

@@ -33,6 +33,8 @@ import { validateClips } from './sprite-kit.js';
 //   happy_wiggle  clicked / petted
 //   celebrate     the "waiting on you" list was just emptied
 //   peek          idle variety: peeks in from the edge
+//   held          picked up: dangling and flailing (stand-in: his wave, swinging)
+//   shake_off     back on his feet after a tumble, shaking it off
 //   walk          strolling along the taskbar (drawn facing right; the host
 //                 mirrors it for walking left)
 // A placeholder is the clip it names, or { from, motion } to borrow a clip
@@ -45,6 +47,8 @@ const PLACEHOLDERS = {
   celebrate: 'wave',
   peek: 'idle',
   walk: { from: 'idle', motion: 'walk' },
+  held: { from: 'wave', motion: 'swing' },
+  shake_off: { from: 'idle', motion: 'shake' },
 };
 
 function withPlaceholders(clips) {
