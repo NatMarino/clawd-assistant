@@ -338,6 +338,7 @@ name = "clawd-assistant"
 version = "0.2.0"
 dependencies = [
  "chrono",
+ "objc2-app-kit",
  "serde",
  "serde_json",
  "tauri",

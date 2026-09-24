@@ -1,10 +1,12 @@
-# Cuts a downloadable release: push a tag (git tag v0.1.0 && git push origin
-# v0.1.0) and this builds the bare exe and the NSIS installer, zips the clawd
-# skill, and attaches all three to a GitHub Release. SETUP.md points people
-# at releases/latest, so this is what a coworker downloads.
+# Cuts a downloadable release: push a tag (git tag v0.2.0 && git push origin
+# v0.2.0) and this builds the Windows installer and exe, the Mac .dmg (one
+# build for Apple silicon and Intel), zips the clawd skill, and attaches it
+# all to a GitHub Release. A tag with a suffix (v0.2.0-beta.1) is a test build:
+# a pre-release, never the "latest" that SETUP.md and coworkers download.
 #
-# The exe is UNSIGNED: SmartScreen warns ("More info" -> "Run anyway"), and
-# Smart App Control, where it is on, blocks it with no override.
+# Nothing is signed. Windows: SmartScreen warns ("More info" -> "Run anyway").
+# Mac: right-click the app -> Open the first time (or System Settings ->
+# Privacy & Security -> Open Anyway).
 name: release
 
 on:
@@ -13,60 +15,85 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to publish (e.g. v0.1.0)'
+        description: 'Tag to publish (e.g. v0.2.0)'
         required: true
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-
       - name: Install tauri-cli
         run: cargo install tauri-cli --version "^2" --locked
-
       - name: Build exe + installer
         working-directory: src-tauri
-        run: cargo tauri build
-
-      - name: Collect artifacts
+        run: cargo tauri build --bundles nsis
+      - name: Collect
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item src-tauri/target/release/clawd-assistant.exe dist/ -Force
-          Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe |
-            ForEach-Object { Copy-Item $_.FullName dist/ -Force }
-          # the skill as Claude's settings expect it: a zip with the skill
-          # folder at its root
+          Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | ForEach-Object { Copy-Item $_.FullName dist/ -Force }
           Compress-Archive -Path skill/clawd -DestinationPath dist/clawd-skill.zip -Force
           Copy-Item SETUP.md dist/ -Force
-          Get-ChildItem dist | Format-Table Name, Length
-
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          # a tag with a suffix (v0.2.0-beta.1) is a test build: a pre-release,
-          # never the "latest" that SETUP.md and coworkers download
-          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
-          make_latest: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
+          tag_name: ${{ env.TAG }}
+          prerelease: ${{ contains(env.TAG, '-') }}
+          make_latest: ${{ !contains(env.TAG, '-') }}
           files: dist/*
           generate_release_notes: true
           body: |
-            Windows 11. **Setting it up:** give `SETUP.md` to your Claude and
-            say "set this up". It walks you through the rest.
+            **Setting it up:** install it, click the egg, and he sets himself up.
+            (If he can't reach Claude Code, he'll ask you to paste his setup
+            message into Claude, which uses `SETUP.md`.)
 
+            **Windows 11**
             - `ClawdAssistant_*_x64-setup.exe`: the installer (per-user, no admin)
             - `clawd-assistant.exe`: the same pet with no installer
-            - `clawd-skill.zip`: the clawd skill, for Claude's Capabilities → Skills
+            - Unsigned: SmartScreen shows "Windows protected your PC". Click
+              *More info*, then *Run anyway*.
 
-            The build is unsigned, so SmartScreen shows "Windows protected your
-            PC": click *More info*, then *Run anyway*.
+            **macOS 11 or later** (Apple silicon and Intel)
+            - `ClawdAssistant_*_universal.dmg`: open it, drag Claw'd to Applications
+            - Unsigned: the first time, right-click the app and choose **Open**
+              (or System Settings → Privacy & Security → **Open Anyway**).
+
+            `clawd-skill.zip` is the clawd skill, for Claude's Capabilities → Skills.
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+      - name: Build universal .dmg
+        working-directory: src-tauri
+        run: cargo tauri build --target universal-apple-darwin --bundles dmg
+      - name: Collect
+        run: |
+          mkdir -p dist
+          cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg dist/
+          ls -la dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          prerelease: ${{ contains(env.TAG, '-') }}
+          make_latest: ${{ !contains(env.TAG, '-') }}
+          files: dist/*

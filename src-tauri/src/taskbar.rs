@@ -11,9 +11,6 @@
 // right-hand end, where Windows puts their clock when it shows one.
 
 use tauri::WebviewWindow;
-use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::RECT;
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW, GetWindowRect};
 
 /// Physical screen pixels.
 #[derive(Clone, Debug)]
@@ -28,19 +25,6 @@ pub struct Taskbar {
     pub display: usize,
     pub display_name: String,
     pub primary: bool,
-}
-
-/// The main taskbar's notification area (tray icons and clock), if it lies
-/// within [left, right).
-fn main_tray_left(left: i32, right: i32) -> Option<i32> {
-    // SAFETY: plain Win32 queries with an owned out-struct
-    unsafe {
-        let bar = FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()).ok()?;
-        let tray = FindWindowExW(Some(bar), None, w!("TrayNotifyWnd"), PCWSTR::null()).ok()?;
-        let mut r = RECT::default();
-        GetWindowRect(tray, &mut r).ok()?;
-        (r.left > left + (right - left) / 2 && r.left < right).then_some(r.left)
-    }
 }
 
 /// The ground for a point on screen: the display containing (x, y), or the
@@ -77,7 +61,7 @@ pub fn query_at(win: &WebviewWindow, x: f64, y: f64) -> Option<Taskbar> {
         .flatten()
         .map_or(idx == 0, |p| p.position() == m.position());
     let tray_left = primary
-        .then(|| main_tray_left(left, right))
+        .then(|| crate::platform::main_tray_left(left, right))
         .flatten()
         .unwrap_or(right - (right - left) / 8);
     Some(Taskbar {

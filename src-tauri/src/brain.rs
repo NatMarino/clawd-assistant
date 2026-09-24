@@ -26,7 +26,6 @@ use tauri::{AppHandle, Emitter};
 
 use crate::PoisonTolerant;
 
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// %APPDATA%\ClawdAssistant\brain.log: one line per check and run (which
 /// program, which model, how it went, any error text), so a problem on a
@@ -81,8 +80,12 @@ pub fn reaches_other_people(tool: &str) -> bool {
 // --- finding the program -------------------------------------------------
 
 fn version_key(p: &Path) -> Vec<u64> {
-    // .../claude-code/2.1.281/claude.exe -> [2, 1, 281]
-    p.parent()
+    // .../claude-code/2.1.281/claude.exe -> [2, 1, 281] (on a Mac the program
+    // may sit inside claude.app/Contents/MacOS; the version is the first
+    // ancestor folder whose name starts with a digit)
+    p.ancestors()
+        .skip(1)
+        .find(|d| d.file_name().map_or(false, |n| n.to_string_lossy().starts_with(|c: char| c.is_ascii_digit())))
         .and_then(|d| d.file_name())
         .map(|n| n.to_string_lossy().split('.').map(|x| x.parse().unwrap_or(0)).collect())
         .unwrap_or_default()
@@ -92,8 +95,7 @@ fn newest_in(dir: &Path) -> Option<PathBuf> {
     let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
         .flatten()
-        .map(|e| e.path().join("claude.exe"))
-        .filter(|p| p.is_file())
+        .filter_map(|e| crate::platform::claude_in_version_dir(&e.path()))
         .collect();
     found.sort_by_key(|p| version_key(p));
     found.pop()
@@ -104,27 +106,16 @@ fn newest_in(dir: &Path) -> Option<PathBuf> {
 pub fn find_claude() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
-            let p = dir.join("claude.exe");
+            let p = dir.join(crate::platform::CLAUDE_EXE);
             if p.is_file() {
                 return Some(p);
             }
         }
     }
-    let home = std::env::var_os("USERPROFILE").map(PathBuf::from);
-    if let Some(p) = home.as_ref().map(|h| h.join(".local").join("bin").join("claude.exe")) {
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    if let Some(p) = std::env::var_os("APPDATA").and_then(|a| newest_in(&PathBuf::from(a).join("Claude").join("claude-code"))) {
+    if let Some(p) = crate::platform::claude_user_paths().into_iter().find(|p| p.is_file()) {
         return Some(p);
     }
-    let packages = std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("Packages"))?;
-    std::fs::read_dir(packages)
-        .ok()?
-        .flatten()
-        .filter(|e| e.file_name().to_string_lossy().starts_with("Claude_"))
-        .find_map(|e| newest_in(&e.path().join("LocalCache").join("Roaming").join("Claude").join("claude-code")))
+    crate::platform::claude_app_dirs().iter().find_map(|d| newest_in(d))
 }
 
 // --- what the page hears ---------------------------------------------------
@@ -286,7 +277,6 @@ pub struct RunSpec {
 }
 
 fn command(exe: &Path, dir: &Path, spec: &RunSpec, tools: &[String]) -> Command {
-    use std::os::windows::process::CommandExt;
     let mut c = Command::new(exe);
     c.current_dir(dir)
         .arg("-p")
@@ -309,7 +299,8 @@ fn command(exe: &Path, dir: &Path, spec: &RunSpec, tools: &[String]) -> Command 
     if let Some(r) = spec.resume.as_deref().filter(|r| !r.is_empty()) {
         c.args(["--resume", r]);
     }
-    c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).creation_flags(CREATE_NO_WINDOW);
+    c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    crate::platform::no_window(&mut c);
     c
 }
 
@@ -405,13 +396,7 @@ pub fn stop(brain: &Brain) {
 /// person can do: logging in, and saying yes to its apps (/mcp).
 pub fn open_window(dir: &Path, first_command: &str) -> bool {
     let Some(exe) = find_claude() else { return false };
-    Command::new("cmd")
-        .current_dir(dir)
-        .args(["/C", "start", "Claw'd - the big brain"])
-        .arg(exe)
-        .arg(first_command)
-        .spawn()
-        .is_ok()
+    crate::platform::open_terminal(dir, &exe, first_command)
 }
 
 #[derive(Serialize, Clone, Debug)]

@@ -7,6 +7,7 @@
 
 mod brain;
 mod feed;
+mod platform;
 mod state;
 mod taskbar;
 
@@ -16,8 +17,6 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{LogicalSize, Manager, PhysicalPosition, WindowEvent};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 /// Poison-tolerant locking. A panic while a lock is held must not take the
 /// poller or saver thread down with it on their next `unwrap`: a dead poller
@@ -103,7 +102,7 @@ impl Default for PetConfig {
 /// %APPDATA%\ClawdAssistant: its own folder, so this pet and the coding
 /// Claw'd can run side by side without sharing position or state.
 pub(crate) fn app_data_dir() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("ClawdAssistant"))
+    platform::app_data_dir()
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -421,8 +420,7 @@ fn stop_walk(state: tauri::State<AppState>) {
 }
 
 fn left_button_down() -> bool {
-    // SAFETY: a plain Win32 state query, no pointers involved
-    unsafe { (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16) & 0x8000 != 0 }
+    platform::left_button_down()
 }
 
 /// Screen position (physical px) of the buddy's center for a window whose
@@ -559,10 +557,7 @@ fn set_pet_scale(window: tauri::WebviewWindow, state: tauri::State<AppState>, sc
     // reads false while the WebView2 child holds keyboard focus): a future
     // caller running while another app is active must not touch focus at
     // all — focusing a child of an inactive window would activate it.
-    let foreground = window
-        .hwnd()
-        .map(|h| h == unsafe { GetForegroundWindow() })
-        .unwrap_or(false);
+    let foreground = platform::is_foreground(&window);
     // his centre before the resize: set_size keeps the top-left corner, so
     // on the taskbar he is re-stood around this point afterwards
     let sf = window.scale_factor().unwrap_or(1.0);
@@ -601,13 +596,7 @@ fn quit_app(app: tauri::AppHandle) {
 /// ShellExecuteW rather than `cmd /C start`: cmd would treat the "&" in any
 /// URL with two query parameters as a command separator.
 fn shell_open(url: &str) -> bool {
-    use windows::core::{w, HSTRING, PCWSTR};
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    // SAFETY: plain Win32 call with owned, NUL-terminated wide strings
-    let r = unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(url), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
-    // ShellExecute reports success as a value greater than 32
-    r.0 as usize > 32
+    platform::open_url(url)
 }
 
 /// Where item links may lead. Items are written by Claude from content it
@@ -752,21 +741,10 @@ fn main() {
             // chrome. Tauri 2.11 has no config switch, so flip it on the COM
             // settings object once the webview exists. Best effort: any
             // failure just leaves the default behaviour.
-            let _ = win.with_webview(|webview| {
-                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
-                use windows::core::Interface;
-                // SAFETY: COM calls on the controller Tauri owns, made on the
-                // webview's own thread by with_webview
-                unsafe {
-                    if let Ok(core) = webview.controller().CoreWebView2() {
-                        if let Ok(settings) = core.Settings() {
-                            if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
-                                let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
-                            }
-                        }
-                    }
-                }
-            });
+            platform::quiet_browser_keys(&win);
+            // on a Mac he lives in the menu bar, not the Dock
+            #[cfg(target_os = "macos")]
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let saved = state.cfg.lock_or_recover().clone();
 
             // Restore scale, then position (clamped: only if the saved point
@@ -805,7 +783,7 @@ fn main() {
                 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
                 use tauri::Emitter;
                 let show = MenuItem::with_id(app, "summon", "Call Claw’d", true, None::<&str>)?;
-                let home = MenuItem::with_id(app, "home", "Back to the taskbar", true, None::<&str>)?;
+                let home = MenuItem::with_id(app, "home", if cfg!(target_os = "macos") { "Back to the Dock" } else { "Back to the taskbar" }, true, None::<&str>)?;
                 let restart = MenuItem::with_id(app, "restart", "Start over (back to the egg)", true, None::<&str>)?;
                 let sep = PredefinedMenuItem::separator(app)?;
                 let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;

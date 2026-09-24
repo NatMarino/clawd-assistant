@@ -8,10 +8,14 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tiny_http = "0.12"
+# times on inbox items (due, expires): RFC 3339, or local time without offset
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[target.'cfg(windows)'.dependencies]
 # direct access to the WebView2 settings object (already a tauri dependency)
 # to switch off browser accelerator keys on the pet window
 webview2-com = "0.38"
@@ -24,8 +28,11 @@ windows = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Shell",
 ] }
-# times on inbox items (due, expires): RFC 3339, or local time without offset
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# NSEvent.pressedMouseButtons: is the button still down during a drag
+# (the same crate and version tauri already uses)
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSEvent", "NSResponder"] }
 
 [features]
 # enabled for production builds (cargo build --release --features custom-protocol):

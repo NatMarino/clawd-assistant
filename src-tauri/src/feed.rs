@@ -64,10 +64,7 @@ pub fn clawd_dir(cfg: &FeedConfig) -> PathBuf {
     if let Some(d) = cfg.clawd_dir.as_deref().filter(|d| !d.trim().is_empty()) {
         return PathBuf::from(d);
     }
-    std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Clawd")
+    crate::platform::home_dir().join("Clawd")
 }
 
 /// 128 bits from the standard library's OS-seeded hasher keys. Enough to stop

@@ -22,17 +22,20 @@
         "shadow": false,
         "resizable": false,
         "maximizable": false,
-        "minimizable": false
+        "minimizable": false,
+        "acceptFirstMouse": true
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
     "targets": [
-      "nsis"
+      "nsis",
+      "dmg"
     ],
     "publisher": "NatMarino",
     "homepage": "https://github.com/NatMarino/clawd-assistant",
@@ -52,6 +55,9 @@
         "installMode": "currentUser",
         "installerIcon": "icons/icon.ico"
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
     }
   }
 }

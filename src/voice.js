@@ -596,7 +596,9 @@ function stop() { Object.values(BACKENDS).forEach((b) => { try { b.stop(); } cat
 // Test and voice-pick buttons, which are about hearing him).
 async function say(text, { force = false } = {}) {
   if (!text || (!settings.enabled && !force)) return false;
-  if (settings.style === 'animalese') {
+  // animalese by choice, or because this web view has no speech voices at
+  // all (it can happen on a Mac): he still talks, just in chatter
+  if (settings.style === 'animalese' || typeof window.speechSynthesis === 'undefined') {
     lastSpokeAt = Date.now();
     return animalese(sanitise(text));
   }
