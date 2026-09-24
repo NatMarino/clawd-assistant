@@ -585,11 +585,12 @@ What is 2 plus 2? Answer in one short sentence.".into(),
 
     #[test]
     fn newest_version_wins() {
-        let mut v = vec![
-            PathBuf::from(r"C:\x\claude-code\2.1.9\claude.exe"),
-            PathBuf::from(r"C:\x\claude-code\2.1.281\claude.exe"),
-            PathBuf::from(r"C:\x\claude-code\2.1.30\claude.exe"),
-        ];
+        // built with join, so the separators are right on Windows and macOS
+        let at = |ver: &str| PathBuf::from("x").join("claude-code").join(ver).join("claude");
+        let mut v = vec![at("2.1.9"), at("2.1.281"), at("2.1.30")];
+        // a Mac copy inside an app bundle still reads its version folder
+        let bundled = at("2.1.300").with_file_name("claude.app").join("Contents").join("MacOS").join("claude");
+        assert_eq!(version_key(&bundled), vec![2, 1, 300]);
         v.sort_by_key(|p| version_key(p));
         assert!(v.last().unwrap().to_string_lossy().contains("2.1.281"));
     }
