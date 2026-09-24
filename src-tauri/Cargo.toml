@@ -1,6 +1,6 @@
 [package]
 name = "clawd-assistant"
-version = "0.1.0"
+version = "0.1.1"
 description = "Claw'd the assistant: a desktop pet your Claude keeps up to date"
 edition = "2021"
 

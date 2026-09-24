@@ -739,9 +739,24 @@
   // A short local clip (reading, celebrate, happy_wiggle...), then back to
   // the derived state. Never papers over something that needs you, unless
   // `force` (the user just did something and deserves to see it land).
+  // How long a clip takes to say its piece: the intro once plus one loop
+  // cycle for staged clips, one pass for flat ones. So a drawn animation
+  // plays in full, and a retimed one needs no change here.
+  function clipMs(name) {
+    const c = pet.style.clips[name];
+    if (!c) return 0;
+    if (c.stages) {
+      const sum = (a) => a.reduce((t, s) => t + s.ms, 0);
+      return sum(c.stages.intro) + sum(c.stages.loop);
+    }
+    return Math.round((c.frames.length / (c.fps || 2)) * 1000);
+  }
+
   let flourishToken = 0;
+  // `ms` null = the clip's own length (clipMs), clamped to something sane
   function flourish(state, ms, force = false) {
     if (!pet.style.clips[state] || feeding || pet.state === 'wave') return false;
+    if (ms == null) ms = Math.min(9000, Math.max(1000, clipMs(state)));
     if (!force && derived && derived.state !== 'idle') return false;
     const tok = ++flourishToken;
     flourishing = true;
@@ -823,7 +838,7 @@
       };
     }
     saveAnnounced();
-    if (r && first.it.kind === 'message') flourish('reading', 3500);
+    if (r && first.it.kind === 'message') flourish('reading', null);
   }
 
   // --- handing things to Claude. The pet holds no account and does no
@@ -1277,7 +1292,7 @@
   function clickBuddy() {
     const opening = popEl.hidden;
     setPopover(opening);
-    if (opening) flourish('happy_wiggle', 1000);
+    if (opening) flourish('happy_wiggle', null);
   }
 
   // --- drag: press + >2px movement drags the window (moved by Rust, not
@@ -1394,7 +1409,7 @@
   //     restarts the nap clock. ---
   setInterval(() => {
     if (pet.state !== 'idle' || !derived || derived.state !== 'idle' || Math.random() > 0.4) return;
-    flourish(Math.random() < 0.5 ? 'peek' : 'happy_wiggle', 1500);
+    flourish(Math.random() < 0.5 ? 'peek' : 'happy_wiggle', null);
   }, 4 * 60 * 1000);
 
   // greet the fresh app launch with a wave, then settle into the inbox

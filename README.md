@@ -100,12 +100,20 @@ open http://localhost:4870, and press **demo inbox** in the debug panel.
 
 ## Status and art
 
-This is the first milestone. The new animations (reading a letter, tapping a
-watch, carrying a parcel, a happy wiggle, a celebration, peeking in) are wired up
-but play **placeholders** borrowed from existing clips until they're drawn. The
-hard hat is placeholder art too. To draw one, add a clip with that name to
-`src/sprites.js`; it replaces its placeholder automatically. The list is in
-`src/styles.js`, and the debug panel shows placeholders with dashed borders.
+**Drawn (CLI skin):** reading a letter (it arrives, then he reads it), a pocket
+watch for meetings, carrying a parcel for deliveries, a happy wiggle when
+clicked, and peeking up from the ground. They come from Nat's animation
+series and are converted by `tools/import-sheets.js`, which reads the pack's
+sprite sheets and writes `src/sprites-office.js`:
+
+```bash
+node tools/import-sheets.js "<pack>/sprites/cli"
+```
+
+**Still placeholders:** `celebrate` and the hard hat on both skins, and every
+new clip on the `app` skin, which borrows an existing move until it has its
+own. The list is in `src/styles.js`, and the debug panel shows placeholders
+with dashed borders.
 
 ## Credits
 
