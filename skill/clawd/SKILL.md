@@ -40,6 +40,7 @@ with you named **Clawd**. Claw'd creates it on his first start.
 |---|---|---|
 | `inbox\` | you | drop item files here; Claw'd picks them up within seconds |
 | `inbox\done\`, `inbox\bad\` | Claw'd | files he read, and files he couldn't |
+| `intro.json` | Claw'd | what he learned when he hatched and got to know them (name, VIPs, hours…), for you to turn into `prefs.json` during setup |
 | `prefs.json` | you, during setup | the user's preferences (below) |
 | `sent.json` | you | your memory between sweeps (below) |
 | `http.json` | Claw'd | a local URL and token, if you'd rather POST than write files |
@@ -81,7 +82,7 @@ the folder: `POST` the same JSON to the `url` in `http.json` with the header
 | `source` | `slack`, `gcal`, `gmail`, `asana`, `drive`, or `claude` for things you made. |
 | `who` | The person, first name or how the user knows them. Empty for things without a person. |
 | `title` | One line, under 100 characters, readable at a glance. No markdown. |
-| `spoken` | What he says out loud: a short natural sentence, written to be heard ("Sam says the launch moved to Thursday."). Optional; he falls back to "who: title". For reminders leave it out, since he works out "starts in 2 minutes" himself. |
+| `spoken` | What he says out loud, in **his** voice (see below): one short sentence, written to be heard. Optional; he falls back to "who: title". For reminders leave it out, since he works out "starts in 2 minutes" himself. |
 | `link` | Where clicking takes the user: the Slack message, email thread, event or Meet link, Asana task, doc. Must be `https://` on the app's own domain (slack.com, google.com, asana.com, zoom.us, claude.ai…); others are refused. |
 | `at` | When it happened (ISO 8601, with offset if you know it). |
 | `due` | Reminders: when it starts or is due. Local time without an offset is fine. |
@@ -90,6 +91,20 @@ the folder: `POST` the same JSON to the `url` in `http.json` with the header
 | `resolved` | `true` removes the item from Claw'd (only `id` is needed). |
 | `rule` | Which rule produced it (the id from `prefs.json`). |
 | `proposal` | Optional: `{ "summary": "...", "draft_link": "https://..." }`. What you'd do about it, in one line. If you saved a draft, link it. Offer one only when there's an obvious helpful action; never pad. |
+
+### His voice
+
+Claw'd talks as himself: a small, cheerful coworker who is helping the user out.
+First person, casual, warm, never corporate, and short enough to say in a breath.
+He adds his own openers ("I need your help with this one.", "Heads up.") and the
+user's name, so a `spoken` line is just the news, said the way he'd say it:
+
+- "Priya's asking if the Q3 deck is final. She needs it by three." (not "Priya: Is the Q3 deck final")
+- "Sam says the launch moved to Thursday."
+- "Your 1:1 with Sam moved to 2:30."
+- For a delivery, his own words about what he made: "I made your morning rundown! Three meetings today."
+
+Never write as Claude, never "the user", and never read out links, IDs or markdown.
 
 Keep snippets short and never copy secrets, passwords, or anything that looks like
 a credential into an item, even if it was in the message.
@@ -162,7 +177,7 @@ items instead.
 
 ## prefs.json
 
-Written during setup, changed whenever the user asks. Read it every time; never
+Written during setup (from `intro.json`), changed whenever the user asks. `name` is what he calls them: use it in the digest and briefing too. Read it every time; never
 cache it in your head.
 
 ```json

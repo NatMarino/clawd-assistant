@@ -122,6 +122,8 @@ This folder is how Claude talks to Claw'd, the desktop assistant pet.
                 it could not be read). Write to a .tmp name, then rename to .json.
   prefs.json    Your preferences (VIPs, channels, work hours, rules). Written
                 by Claude during setup; ask Claude to change it.
+  intro.json    What Claw'd learned about you when he hatched (your name,
+                VIPs, hours). Claude turns it into prefs.json.
   sent.json     Claude's own notes between checks (what it already told Claw'd).
   http.json     The local port and token, for a Claude that prefers HTTP.
   SKILL.md      Claude's instructions for looking after Claw'd. Rewritten

@@ -19,6 +19,7 @@
 import { CLIPS, SPRITE_W, SPRITE_H } from './sprites.js';
 import { CLIPS_CLI, CLI_W, CLI_H } from './sprites-cli.js';
 import { OFFICE_CLI, OFFICE_APP } from './sprites-office.js';
+import { EGG_CLI, EGG_APP } from './sprites-egg.js';
 import { validateClips } from './sprite-kit.js';
 
 // The assistant's new clips, and what each stands in with until it is drawn.
@@ -72,8 +73,8 @@ function mirrored(clip, spriteW, cell) {
   return { ...clip, stages: { intro: st.intro.map(flip), loop: st.loop.map(flip), outro: st.outro.map(flip) } };
 }
 
-const CLI_ALL = { ...CLIPS_CLI, ...OFFICE_CLI };
-const APP_ALL = { ...CLIPS, ...OFFICE_APP };
+const CLI_ALL = { ...CLIPS_CLI, ...OFFICE_CLI, ...EGG_CLI };
+const APP_ALL = { ...CLIPS, ...OFFICE_APP, ...EGG_APP };
 if (OFFICE_CLI.walk) CLI_ALL.walk_left = mirrored(OFFICE_CLI.walk, CLI_W, 1.5);
 if (OFFICE_APP.walk) APP_ALL.walk_left = mirrored(OFFICE_APP.walk, SPRITE_W, 8);
 

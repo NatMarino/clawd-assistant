@@ -2,7 +2,7 @@
 
 *Someone sent this file and asked you to set Claw'd up. These instructions are
 written to you, their Claude. Work through them with the person, one step at a
-time. It takes about ten minutes.*
+time. It takes about fifteen minutes, and the best part is theirs: hatching him.*
 
 ## What Claw'd is
 
@@ -39,8 +39,8 @@ You can't install software for them, so walk them through it:
 2. Run it. Windows will probably say **"Windows protected your PC"**, because the
    app isn't signed with a paid certificate. Click **More info**, then **Run
    anyway**. It installs for this user only and doesn't need an administrator.
-3. Claw'd waves hello. He'll then go **grey with a question mark**. That's
-   expected: he hasn't heard from you yet.
+3. Claw'd appears on the taskbar as **an egg**. That's expected: he hatches once
+   you've connected him (step 5), and they get to hatch him.
 
 If Windows refuses the file outright with no "Run anyway" option, Smart App
 Control or the company's IT policy is blocking it. Stop there. They'll need to
@@ -56,21 +56,70 @@ Ask them to give you access to that folder. In Cowork, add it as a folder you ca
 work in. Then check that you can see `README.txt` and the `inbox` folder. **Only
 continue once you can write to `inbox`.**
 
-## Step 4: Learn their preferences
+## Step 4: Install the skill
 
-Ask these questions a few at a time, conversationally, and keep it quick. Offer
-the defaults in brackets.
+The instructions for looking after Claw'd are a skill called **clawd**. The
+scheduled checks can read them straight from `Clawd\SKILL.md`, but installing the
+skill lets you understand Claw'd in every chat, including the ones his Ask box and
+Do it button open.
 
-1. What should Claw'd call you?
-2. Who are your VIPs, the people whose messages should never wait? Name plus
-   Slack handle or email, whichever you know. Look them up yourself where you can.
-3. Any Slack channels where you'd like to hear notable news? (none)
-4. Which days and hours do you work, and in what time zone? (Mon–Fri, 9:00–17:30,
-   this computer's time zone)
-5. How often should I check? (every 15 minutes)
-6. Want a morning digest? What time? (yes, 15 minutes after you start)
-7. Then show the list of what he can watch for, with the default on/off, and let
-   them switch any:
+Ask them to download `clawd-skill.zip` from the same release page and add it in
+Claude's settings under **Capabilities → Skills**. If they'd rather not, or can't,
+carry on: the scheduled tasks below still work.
+
+## Step 5: Wake him up
+
+Connect him by writing a heartbeat into `Clawd\inbox` (write it as `hello.tmp`,
+then rename it to `hello.json`):
+
+```json
+{ "id": "heartbeat", "kind": "heartbeat", "interval_min": 15 }
+```
+
+Within a few seconds the egg starts to wobble, and a bubble says *Something's
+moving in here… Click me to hatch me!* Tell them that's their cue: **they hatch
+him themselves**, with a click on the egg.
+
+If the egg doesn't wobble:
+- A file stuck in `inbox` means Claw'd isn't running. Ask them to start **Claw'd**
+  from the Start menu.
+- A file in `inbox\bad` means it wasn't valid JSON. Fix it and try again.
+
+## Step 6: Let him get to know them
+
+Once he hatches, Claw'd introduces himself out loud and asks, one at a time:
+what to call them, who their VIPs are, which Slack channels are worth hearing
+about, when they work, whether they'd like a morning rundown (and when), and
+anything else he should keep an eye on. They type each answer into his speech
+bubble. This part is his, not yours, so stay quiet and let them chat with him.
+
+When he's done he says so, and writes what he learned to `Clawd\intro.json`:
+
+```json
+{ "version": 1, "name": "Nat",
+  "answers": { "name": "Nat", "vips": "Priya, Stephen", "channels": "#launch",
+               "hours": "Mon to Fri 9 to 5:30", "digest": "yes 8:45",
+               "watch": "who's checking into a hotel" },
+  "completed_at": "…" }
+```
+
+Ask them to tell you when he's finished, then read that file.
+
+## Step 7: Turn it into his settings
+
+From `intro.json`, work out `prefs.json` (the format is at the end of
+`Clawd\SKILL.md`):
+
+- `name`: exactly as they gave it. He already uses it, and your spoken lines should too.
+- **VIPs**: look each name up in Slack and email, and store their handle and address.
+  Ask only about names you can't place.
+- **Channels, work hours, digest time**: from their answers. Take the time zone from
+  this computer. A blank or "no" digest means no digest task.
+- **Anything else**: each thing becomes a custom rule, in their own words.
+- **Check how often**: every 15 minutes unless they said otherwise.
+
+Then show them, in the chat, the list of what he can watch for, with each rule's
+default on or off, and let them switch any:
 
 | Rule | Default |
 |---|---|
@@ -85,25 +134,10 @@ the defaults in brackets.
 | Notable news in the channels above | on, if they named any |
 | Important emails (your manager, things due today) | off |
 
-   And ask: "Anything else you'd like him to watch for?" Turn each answer into a
-   custom rule, in their own words.
+Write `Clawd\prefs.json`, with the rule ids from the skill's rules table, and
+read it back to them in plain words, not JSON.
 
-Write the answers to `Clawd\prefs.json` in the format shown at the end of
-`Clawd\SKILL.md`, with the rule ids from its rules table. Read the file back to
-them in plain words, not JSON.
-
-## Step 5: Install the skill
-
-The instructions for looking after Claw'd are a skill called **clawd**. The
-scheduled checks can read them straight from `Clawd\SKILL.md`, but installing the
-skill lets you understand Claw'd in every chat, including the ones his Ask box and
-Do it button open.
-
-Ask them to download `clawd-skill.zip` from the same release page and add it in
-Claude's settings under **Capabilities → Skills**. If they'd rather not, or can't,
-carry on: the scheduled tasks below still work.
-
-## Step 6: Schedule the checks
+## Step 8: Schedule the checks
 
 Create two scheduled tasks in this person's Claude:
 
@@ -121,30 +155,10 @@ If the scheduler can't limit tasks to work hours, schedule the sweep every
 `sweep_minutes` minutes anyway. The skill sends a `quiet_until` so he rests
 overnight, and a sweep outside work hours should send only a heartbeat.
 
-## Step 7: Say hello through him
+Then **run one real sweep now**, following the skill, so they meet him with real
+things to tell them about.
 
-1. Write a test file into `Clawd\inbox` (named with a `.tmp` extension, then renamed to `.json`):
-   ```json
-   [
-     { "id": "setup-hello", "kind": "message", "source": "claude",
-       "title": "Claw'd is connected", "spoken": "Hi! Claude and I are connected now." },
-     { "id": "heartbeat", "kind": "heartbeat", "interval_min": 15 }
-   ]
-   ```
-   (Use their real sweep interval.)
-2. Ask them: did he stop being grey and say hello? If yes, clear the test by
-   writing `{ "id": "setup-hello", "resolved": true }`.
-3. Run one real sweep now, following the skill, so they see real items straight away.
-
-If he didn't react:
-- A file stuck in `inbox` means Claw'd isn't running. Ask them to start **Claw'd**
-  from the Start menu.
-- A file in `inbox\bad` means it wasn't valid JSON. His popover (click him) shows
-  the error. Fix it and try again.
-- A file that moved to `inbox\done` but no reaction usually means the sound is off:
-  click him, then the gear, and check **voice: on**.
-
-## Step 8: Hand over
+## Step 9: Hand over
 
 Tell them, briefly:
 
@@ -157,4 +171,6 @@ Tell them, briefly:
   specific suggestion to you to carry out.
 - To change what he watches, tell you: "Claw'd should also tell me when…" or
   "stop telling me about…".
-- Drag him anywhere. `+` and `-` resize him while he's selected, and `q` quits.
+- He lives on the taskbar, by the clock. Drag him anywhere, and drop him back near
+  the taskbar to send him home. `+` and `-` resize him while he's selected, and the
+  tray icon (the crab by the clock) has **Quit**.

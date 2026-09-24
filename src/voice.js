@@ -21,14 +21,25 @@
 // sentence with "Hello friend" stops being charming by the third time. The
 // greeting shows up sometimes (GREET_CHANCE), only on fresh news, and never
 // the same one twice running.
+// {n} is ", Nat" once he knows your name, and nothing before that.
 const GREETINGS = [
-  'Hello friend.', 'Hey.', 'Hi there.', 'Psst.', 'Oh!', 'Hello.',
-  'Excuse me.', 'Hey friend.', 'Ahem.',
+  'Hey{n}!', 'Hi{n}.', 'Psst{n}.', 'Oh! Hi{n}.', 'Hello{n}.', 'Excuse me{n}.', 'Ahem.',
 ];
 const GREET_CHANCE = 0.35;
 
 // A nudge is a waiting item he already told you about, still sitting there.
-const NUDGE_OPENERS = ['Still waiting:', 'Just checking:', 'Psst, still there:', 'Friendly nudge:'];
+// He talks as himself, a small coworker: "I need…", "I just finished…".
+// These open a line; the item's own words follow.
+const OPENERS = {
+  waiting: ['I need your help with this one.', 'Can you look at this for me?', 'This one needs you.', 'I need you for a sec.'],
+  message: ['I’ve got news.', 'Heads up.', 'Guess what?', 'Just so you know.'],
+  nudge: ['I still need you on this one.', 'Don’t forget me!', 'I’m still waiting on this one.', 'Friendly nudge from me.'],
+};
+
+// what to call you; set once you've told him (index.html, the intro)
+let userName = '';
+function setName(name) { userName = String(name || '').trim(); }
+const nameTail = () => (userName ? ', ' + userName : '');
 
 // Items arrive in bursts (one sweep, several finds). He says one thing, then
 // gives it room before the next; the host retries on its next tick.
@@ -153,16 +164,19 @@ const endStop = (s) => (/[.!?]$/.test(s) ? s : s + '.');
 // Exported so the host can show it, and so it can be checked without sound.
 function lineForItem(item, how = 'new', { minutes = 0, count = 1, forceGreeting = false } = {}) {
   const title = sanitise(item.title) || itemText(item);
+  const text = endStop(cap(itemText(item)));
   let body;
-  if (how === 'soon') body = minutes <= 1 ? `${title} is starting now` : `${title} starts in ${minutes} minutes`;
-  else if (how === 'late') body = `${title} has started. You might be late!`;
-  else if (how === 'nudge') body = pick(NUDGE_OPENERS, 'nudge') + ' ' + itemText(item);
-  else if (item.kind === 'delivery' && !sanitise(item.spoken)) body = `Your ${title} is ready`;
-  else body = itemText(item);
+  if (how === 'soon') body = minutes <= 1 ? `${title} is starting now${nameTail()}!` : `${title} starts in ${minutes} minutes${nameTail()}!`;
+  else if (how === 'late') body = `${title} already started${nameTail()}! I think you might be late.`;
+  else if (how === 'nudge') body = pick(OPENERS.nudge, 'nudge') + ' ' + text;
+  else if (item.kind === 'delivery') body = sanitise(item.spoken) ? text : `I just finished your ${title}!`;
+  else if (item.kind === 'waiting') body = pick(OPENERS.waiting, 'waiting') + ' ' + text;
+  else if (item.kind === 'message') body = (Math.random() < 0.6 ? pick(OPENERS.message, 'message') + ' ' : '') + text;
+  else body = text;
   body = endStop(cap(body));
-  const lead = count > 1 ? `${count} new things. ` : '';
+  const lead = count > 1 ? `I’ve got ${count} new things for you. ` : '';
   const greet = (forceGreeting || (how === 'new' && Math.random() < GREET_CHANCE))
-    ? pick(GREETINGS, 'greet') + ' ' : '';
+    ? pick(GREETINGS, 'greet').replace('{n}', nameTail()) + ' ' : '';
   return greet + lead + body;
 }
 
@@ -411,6 +425,6 @@ function isSpeaking() {
 }
 
 export {
-  announce, canAnnounce, isSpeaking, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
+  announce, canAnnounce, isSpeaking, setName, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
   lineForItem, sanitise, systemBackend, DEFAULTS, LIMITS,
 };

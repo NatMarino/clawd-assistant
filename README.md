@@ -49,6 +49,10 @@ in it is tied to the person who sent it.
 
 ## Using it
 
+- **He starts as an egg.** Once Claude connects him, the egg wobbles and you
+  click to hatch him. He introduces himself, asks what to call you and a few
+  questions about your day, and calls you by name from then on. (The tray's
+  *Start over* puts him back in his egg.)
 - **He lives on your taskbar.** His home is just left of the clock. When nothing
   needs you he tucks in behind the taskbar with his eyes peeking over, looks up
   now and then, and every few minutes takes a short stroll and wanders back.
@@ -75,7 +79,8 @@ contains:
 | | |
 |---|---|
 | `inbox\` | Claude drops JSON items here. He reads them within ~2 s and moves them to `done\` (or `bad\`). |
-| `prefs.json` | Your preferences, written by Claude. Ask Claude to change them. |
+| `intro.json` | What he learned about you when he hatched: your name, VIPs, hours. |
+| `prefs.json` | Your preferences, written by Claude from that. Ask Claude to change them. |
 | `sent.json` | Claude's memory between checks. |
 | `http.json` | `http://127.0.0.1:4318/items` and a token, for a Claude that can POST instead. |
 | `SKILL.md` | The skill, matching this version of the pet. |

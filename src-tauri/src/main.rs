@@ -284,6 +284,25 @@ fn report_anchor(window: tauri::WebviewWindow, state: tauri::State<AppState>, x:
     }
 }
 
+/// What he learned when he got to know you (the interview after hatching),
+/// written to the Clawd folder as intro.json for Claude to turn into
+/// prefs.json. Also where he remembers your name across reinstalls.
+#[tauri::command]
+fn save_intro(state: tauri::State<AppState>, json: String) -> bool {
+    let dir = feed::clawd_dir(&state.cfg.lock_or_recover().feed);
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) else { return false };
+    let pretty = serde_json::to_string_pretty(&v).unwrap_or(json);
+    let tmp = dir.join("intro.json.tmp");
+    std::fs::write(&tmp, pretty).is_ok() && std::fs::rename(&tmp, dir.join("intro.json")).is_ok()
+}
+
+#[tauri::command]
+fn load_intro(state: tauri::State<AppState>) -> Option<serde_json::Value> {
+    let dir = feed::clawd_dir(&state.cfg.lock_or_recover().feed);
+    let text = std::fs::read_to_string(dir.join("intro.json")).ok()?;
+    serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
+}
+
 #[tauri::command]
 fn stop_walk(state: tauri::State<AppState>) {
     *state.walk.lock_or_recover() = None;
@@ -577,7 +596,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             set_opaque_bounds, start_drag, end_drag, set_pet_scale, get_pet_scale, quit_app,
-            open_link, ask_claude, taskbar_info, go_to_taskbar, walk_to, stop_walk, report_anchor,
+            open_link, ask_claude, taskbar_info, go_to_taskbar, walk_to, stop_walk, report_anchor, save_intro, load_intro,
             state::get_pet_state, state::dismiss_item, state::hand_off_item
         ])
         .setup(move |app| {
@@ -673,9 +692,10 @@ fn main() {
                 use tauri::Emitter;
                 let show = MenuItem::with_id(app, "summon", "Call Claw’d", true, None::<&str>)?;
                 let home = MenuItem::with_id(app, "home", "Back to the taskbar", true, None::<&str>)?;
+                let restart = MenuItem::with_id(app, "restart", "Start over (back to the egg)", true, None::<&str>)?;
                 let sep = PredefinedMenuItem::separator(app)?;
                 let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-                let menu = Menu::with_items(app, &[&show, &home, &sep, &quit])?;
+                let menu = Menu::with_items(app, &[&show, &home, &restart, &sep, &quit])?;
                 let mut tray = TrayIconBuilder::with_id("clawd")
                     .tooltip("Claw’d")
                     .menu(&menu)

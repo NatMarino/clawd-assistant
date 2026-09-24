@@ -161,6 +161,26 @@
   #askbox input:focus { border-color: #e89478; }
   #askbox .ask-hint { color: #8a857f; font-size: 11px; margin-top: 5px; }
 
+  /* getting to know you: his question, your answer */
+  #chat {
+    position: fixed; box-sizing: border-box;
+    background: rgba(22, 22, 27, .96); color: #e6e0da;
+    border: 1px solid #9ab98f; border-radius: 12px;
+    padding: 10px 12px; font-size: 13px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.4);
+  }
+  #chat .chat-q { font-size: 14px; line-height: 1.35; margin-bottom: 8px; }
+  #chat input {
+    width: 100%; box-sizing: border-box; font: inherit; font-size: 14px;
+    background: #2a2a31; color: #f1ebe5; border: 1px solid #555; border-radius: 8px;
+    padding: 6px 8px; outline: none;
+  }
+  #chat input:focus { border-color: #9ab98f; }
+  #chat .chat-row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; color: #8a857f; font-size: 11px; }
+  #chat .mini[hidden] { display: none; }
+  body.panels-light #chat { background: rgba(247, 244, 240, .97); color: #3b3630; border-color: #7f9f73; }
+  body.panels-light #chat input { background: #fff; color: #3b3630; border-color: #c9beb4; }
+
   /* a passing word after a click ("Sent to Claude"); never clickable */
   #toast {
     position: fixed; box-sizing: border-box; pointer-events: none;
@@ -314,8 +334,13 @@
 <div id="bubble" hidden></div>
 <div id="askbox" hidden>
   <input id="ask-input" type="text" maxlength="600" autocomplete="off" spellcheck="true"
-         placeholder="Ask Claw'd… (Enter sends, Esc closes)">
-  <div class="ask-hint">Claude will show you its plan first. Nothing gets sent without your OK.</div>
+         placeholder="Tell me what you need… (Enter sends, Esc closes)">
+  <div class="ask-hint">I’ll ask Claude, and it’ll show you the plan first. Nothing gets sent without your OK.</div>
+</div>
+<div id="chat" hidden>
+  <div id="chat-q" class="chat-q"></div>
+  <input id="chat-input" type="text" maxlength="300" autocomplete="off" spellcheck="true">
+  <div class="chat-row"><span>Enter to answer</span><button id="chat-skip" class="mini">Skip</button></div>
 </div>
 <div id="toast" hidden></div>
 <div id="petbtns" hidden>
@@ -342,6 +367,7 @@
   import { STYLES } from './styles.js';
   import { TreatSprite, FALL_MS } from './treats.js';
   import * as voice from './voice.js';
+  import { HATCH_MS } from './sprites-egg.js';
 
   const IS_TAURI = !!window.__TAURI__;
   const invoke = IS_TAURI ? window.__TAURI__.core.invoke : null;
@@ -377,6 +403,14 @@
   const askEl = document.getElementById('askbox');
   const askInput = document.getElementById('ask-input');
   const toastEl = document.getElementById('toast');
+  const chatEl = document.getElementById('chat');
+
+  // Who he is to you: hatched from his egg yet, and what to call you.
+  let hatched = false;
+  try { hatched = localStorage.getItem('hatched') === '1'; } catch {}
+  let userName = '';
+  try { userName = localStorage.getItem('userName') || ''; } catch {}
+  voice.setName(userName);
 
   // --- life on the taskbar (see "Life on the taskbar" below). Declared up
   //     here because the hit-region code reads it. ---
@@ -407,7 +441,7 @@
     let right = x + b.w, bottom = y + b.h;
     // on the taskbar nothing below the line is him: that is the taskbar
     if (onTaskbar()) { bottom = Math.min(bottom, r.bottom); y = Math.min(y, bottom); }
-    for (const el of [popEl, btnsEl, bubEl, askEl]) {
+    for (const el of [popEl, btnsEl, bubEl, askEl, chatEl]) {
       if (el.hidden) continue;
       const pr = el.getBoundingClientRect();
       x = Math.min(x, pr.left); y = Math.min(y, pr.top);
@@ -430,7 +464,7 @@
     clearTimeout(btnHideTimer);
     btnHideTimer = null;
     // every panel supersedes them, and a meal in progress hides them
-    if (!btnsEl.hidden || !popEl.hidden || !bubEl.hidden || !askEl.hidden || feeding) return;
+    if (!hatched || !btnsEl.hidden || !popEl.hidden || !bubEl.hidden || !askEl.hidden || !chatEl.hidden || feeding) return;
     const r = wrap.getBoundingClientRect();
     const rb = pet.restBounds();
     treatBtn.classList.toggle('peckish', isPeckish());
@@ -538,7 +572,7 @@
     mode = m;
     try { localStorage.setItem('mode', m); } catch {}
     syncModeButtons();
-    voice.say(m === 'doit' ? 'Okay. Hard hat on.' : 'Hard hat off. Back to ideas only.');
+    voice.say(m === 'doit' ? 'Hard hat on! I’ll do things when you tell me to.' : 'Hard hat off. I’ll just suggest things.');
     renderPopover();
     updateBubble(true);
   }
@@ -598,7 +632,7 @@
   // forced on, so you hear the whole shape), else a sample
   function sampleLine() {
     const top = inbox && inbox.items && inbox.items[0];
-    return voice.lineForItem(top || { kind: 'waiting', who: 'Claw’d', title: 'This is what I sound like when something needs you.' },
+    return voice.lineForItem(top || { kind: 'waiting', who: 'Claw’d', title: 'This is what I sound like when I need you.' },
       'new', { forceGreeting: true });
   }
   document.getElementById('voice-test').onclick = (e) => {
@@ -732,17 +766,19 @@
   function feedStatus(p, now) {
     if (!p) return { stale: false, text: '' };
     if (p.last_heard_ms == null) {
-      return { stale: true, text: 'Claude hasn’t checked in yet. Finish setup (SETUP.md).' };
+      return { stale: true, text: 'I haven’t heard from Claude yet. Let’s finish setting me up (SETUP.md).' };
     }
     const gap = now - p.last_heard_ms;
     const quiet = p.quiet_until_ms && now < p.quiet_until_ms;
-    if (quiet) return { stale: false, text: `off until ${fmtClock(p.quiet_until_ms)} · last check ${fmtAge(gap)} ago` };
+    if (quiet) return { stale: false, text: `resting until ${fmtClock(p.quiet_until_ms)} · Claude checked ${fmtAge(gap)} ago` };
     const limit = 2 * Math.max(1, p.sweep_minutes) * 60000 + 60000;
-    if (gap > limit) return { stale: true, text: `haven’t heard from Claude in ${fmtAge(gap)}` };
-    return { stale: false, text: `last check ${fmtAge(gap)} ago` };
+    if (gap > limit) return { stale: true, text: `I haven’t heard from Claude in ${fmtAge(gap)}` };
+    return { stale: false, text: `Claude checked ${fmtAge(gap)} ago` };
   }
 
   function derive(p, now) {
+    // before he hatches: an egg, which wobbles once Claude has connected
+    if (!hatched) return { state: p && p.last_heard_ms != null ? 'egg_wobble' : 'egg', count: 0 };
     if (!p) return { state: IS_TAURI ? 'sleeping' : 'idle' };
     const att = attentionList(p, now);
     if (att.length) {
@@ -920,7 +956,7 @@
   }
 
   function lifeTick(now) {
-    if (!IS_TAURI || !onTaskbar() || life.dragging) return;
+    if (!IS_TAURI || !onTaskbar() || life.dragging || !hatched || !chatEl.hidden) return;
     const tb = life.tb;
     const calm = !!derived && derived.state === 'idle' && popEl.hidden && askEl.hidden
       && !feeding && !life.hovering;
@@ -1038,9 +1074,156 @@
     voice.chirp(null, 'light');
   }
 
+  // ======================================================================
+  // Hatching, and getting to know you. Until Claude has checked in he is an
+  // egg; once it has, the egg wobbles and a click hatches him. Then he asks
+  // a few questions out loud (answers typed into his chat bubble for now,
+  // voice in v0.3), remembers your name, and writes what he learned to
+  // Clawd\intro.json for Claude to turn into prefs.json.
+  // ======================================================================
+  const chatQ = document.getElementById('chat-q');
+  const chatInput = document.getElementById('chat-input');
+  const chatSkip = document.getElementById('chat-skip');
+
+  const QUESTIONS = [
+    { key: 'name', ask: 'Hi! I’m Claw’d. I just hatched! What should I call you?', ph: 'Your name' },
+    { key: 'vips', ask: 'Nice to meet you, {name}! Who are the people whose messages should never wait? Just tell me their names.', ph: 'e.g. Priya, Stephen', optional: true },
+    { key: 'channels', ask: 'Are there any Slack channels where you’d like me to tell you the news?', ph: 'e.g. #launch, or skip', optional: true },
+    { key: 'hours', ask: 'When do you usually work?', ph: 'e.g. Mon to Fri, 9 to 5:30' },
+    { key: 'digest', ask: 'Should I give you a rundown of your day every morning? What time?', ph: 'e.g. yes, 8:45, or no' },
+    { key: 'watch', ask: 'Is there anything else you’d like me to keep an eye on for you?', ph: 'e.g. who’s checking into a hotel', optional: true },
+  ];
+  const DONE_LINE = 'Got it, {name}! I’ll tell Claude everything so it can finish setting me up. I’m so happy to meet you!';
+
+  let intro = { step: 0, answers: {} };
+  try { intro = JSON.parse(localStorage.getItem('intro') || 'null') || intro; } catch {}
+  const saveIntroProgress = () => { try { localStorage.setItem('intro', JSON.stringify(intro)); } catch {} };
+  const introDone = () => intro.step >= QUESTIONS.length;
+  const fillName = (s) => s.replace(/\{name\}/g, userName || 'friend');
+
+  // "call me Nat" / "I'm Nat." / "my name is nat" -> "Nat"
+  function cleanName(raw) {
+    let n = String(raw || '').trim()
+      .replace(/^(you can |please )?(call me|i'?m|i am|my name is|it'?s|name'?s)\s+/i, '')
+      .replace(/[.!?,;:]+$/, '').trim();
+    if (n.length > 40) n = n.slice(0, 40);
+    return n ? n.charAt(0).toUpperCase() + n.slice(1) : '';
+  }
+
+  function setUserName(n) {
+    userName = n || '';
+    try { if (userName) localStorage.setItem('userName', userName); else localStorage.removeItem('userName'); } catch {}
+    voice.setName(userName);
+  }
+
+  function placeChat() {
+    placeCenteredOnBuddy(chatEl, Math.min(320, window.innerWidth - 16));
+    chatEl.style.bottom = aboveBuddyBottomCss(10);
+  }
+
+  function askCurrent() {
+    const q = QUESTIONS[intro.step];
+    if (!q) return;
+    setPopover(false);
+    closeAsk();
+    chatEl.hidden = false;
+    chatQ.textContent = fillName(q.ask);
+    chatInput.value = '';
+    chatInput.placeholder = q.ph;
+    chatSkip.hidden = !q.optional;
+    placeChat();
+    updateBubble(true);
+    reportBounds();
+    voice.say(fillName(q.ask));
+    setTimeout(() => chatInput.focus(), 0);
+  }
+
+  function closeChat() {
+    if (chatEl.hidden) return;
+    chatEl.hidden = true;
+    updateBubble(true);
+    reportBounds();
+  }
+
+  function answer(text) {
+    const q = QUESTIONS[intro.step];
+    if (!q) return;
+    if (q.key === 'name') {
+      const n = cleanName(text);
+      if (!n) { chatInput.focus(); return; } // his name for you is the one thing he needs
+      setUserName(n);
+      intro.answers.name = n;
+    } else {
+      intro.answers[q.key] = String(text || '').trim();
+    }
+    intro.step++;
+    saveIntroProgress();
+    if (!introDone()) { askCurrent(); return; }
+    closeChat();
+    const record = { version: 1, name: userName, answers: intro.answers, completed_at: new Date().toISOString() };
+    if (IS_TAURI) invoke('save_intro', { json: JSON.stringify(record) });
+    voice.say(fillName(DONE_LINE));
+    flourish('celebrate', 2500, true);
+  }
+
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); answer(chatInput.value); }
+    else if (e.key === 'Escape') closeChat(); // a pause: clicking him picks up where you left off
+  });
+  chatSkip.addEventListener('click', (e) => { e.stopPropagation(); answer(''); });
+
+  let hatching = false;
+  function hatchNow() {
+    if (hatched || hatching) return;
+    hatching = true;
+    bubEl.hidden = true;
+    setTuck(false, true);
+    const release = hold('hatch', true);
+    // a chirp at each crack, a big one when he's out
+    setTimeout(() => voice.chirp(null, 'light'), 700);
+    setTimeout(() => voice.chirp(null, 'light'), 1200);
+    setTimeout(() => voice.chirp(null, 'happy'), HATCH_MS - 450);
+    setTimeout(() => {
+      hatched = true;
+      hatching = false;
+      try { localStorage.setItem('hatched', '1'); } catch {}
+      if (release) release();
+      derived = null;
+      tick();
+      flourish('wave', 1500, true);
+      intro = { step: 0, answers: {} };
+      saveIntroProgress();
+      setTimeout(askCurrent, 600);
+    }, HATCH_MS);
+  }
+
+  // the egg can't do much yet: say why, or hatch
+  function clickEgg() {
+    if (derived && derived.state === 'egg_wobble') { hatchNow(); return; }
+    voice.chirp(null, 'light');
+    showToast('I’m still in my egg! Finish setting me up with Claude first (SETUP.md), then come and hatch me.');
+  }
+
+  // Tray "Start over (back to the egg)": for trying the whole first meeting
+  // again. Clears what he knows about you, not the inbox.
+  function startOver() {
+    if (life.walking) stopWalking();
+    setTuck(false, true);
+    setPopover(false);
+    closeAsk();
+    closeChat();
+    hatched = false;
+    try { localStorage.removeItem('hatched'); localStorage.removeItem('intro'); } catch {}
+    intro = { step: 0, answers: {} };
+    setUserName('');
+    derived = null;
+    tick();
+  }
+
   // --- what he says, and when ---
   let speakBusy = false;
   async function speakTick(now) {
+    if (!hatched) return;
     if (!inbox || speakBusy) return;
     const cands = [];
     const live = new Set();
@@ -1135,7 +1318,7 @@
       'Using the clawd skill, let’s look at this together. Don’t send or change anything yet.\n\n'
       + describe(it) + (p.summary ? `\nYour idea was: ${p.summary}` : '')
       + (p.draft_link ? `\nDraft: ${p.draft_link}` : '') + `\n(clawd item ${it.id})`,
-      'Opened in Claude.');
+      'I opened it in Claude.');
   }
   function doIt(it) {
     const p = it.proposal || {};
@@ -1143,7 +1326,7 @@
       'Using the clawd skill, carry out this proposal. I approved it by pressing Do it on Claw’d.\n\n'
       + `Proposal: ${p.summary}\nAbout: ${describe(it)}`
       + (p.draft_link ? `\nDraft: ${p.draft_link}` : '') + `\n(clawd item ${it.id})`,
-      'Handed to Claude.');
+      'I passed it to Claude!');
     if (IS_TAURI) invoke('hand_off_item', { id: it.id });
     it.handed_off = true; // optimistic; Rust confirms on its next publish
     flourish('working', 3000, true);
@@ -1180,7 +1363,9 @@
       return;
     }
     const att = attentionList(inbox, now);
-    popCount.textContent = att.length ? `${att.length} waiting on you` : 'all clear';
+    popCount.textContent = att.length
+      ? `I need you for ${att.length === 1 ? 'one thing' : att.length + ' things'}`
+      : (userName ? `All caught up, ${userName}!` : 'All caught up!');
     const fs = feedStatus(inbox, now);
     const err = inbox.feed_error ? 'couldn’t read ' + inbox.feed_error : '';
     popFeed.hidden = !(err || fs.text);
@@ -1211,7 +1396,7 @@
     if (!any) {
       const e = document.createElement('div');
       e.className = 'empty';
-      e.textContent = 'Nothing right now. Whatever Claude finds shows up here.';
+      e.textContent = 'Nothing yet. I’ll show you whatever Claude finds.';
       popItems.appendChild(e);
     }
   }
@@ -1342,6 +1527,7 @@
   //     updates in place so a click is never lost to a rebuild. ---
   let bubKey = '';
   bubEl.addEventListener('click', () => {
+    if (!hatched) { clickEgg(); return; }
     const it = derived && derived.top;
     if (it) openItem(it);
   });
@@ -1349,15 +1535,33 @@
     const it = d.top;
     if (d.state === 'clock') {
       const when = it.due_ms == null ? '' : (now < it.due_ms ? 'starts ' + relDue(it.due_ms, now) : 'started ' + fmtAge(now - it.due_ms) + ' ago');
-      return { title: it.title || 'Reminder', detail: [when, it.who].filter(Boolean).join(' · ') };
+      return { title: `Heads up: ${it.title || 'your reminder'}`, detail: [when, it.who].filter(Boolean).join(' · ') };
     }
-    if (d.state === 'package') return { title: 'Special delivery', detail: it.title || 'Something from Claude' };
+    if (d.state === 'package') return { title: 'I just finished something!', detail: it.title || 'Something from Claude' };
     const more = d.count > 1 ? `  (+${d.count - 1} more)` : '';
-    return { title: (it.who || sourceLabel(it) || 'Waiting on you') + more, detail: it.title || '' };
+    const from = it.who || sourceLabel(it);
+    return { title: (userName ? `${userName}, I need your help!` : 'I need your help!') + more, detail: (from ? from + ': ' : '') + (it.title || '') };
   }
   function updateBubble(force = false) {
     const d = derived;
-    const show = !!(d && d.top) && popEl.hidden && askEl.hidden
+    if (d && d.state === 'egg_wobble' && popEl.hidden && askEl.hidden && chatEl.hidden && !hatching) {
+      if (bubKey === 'egg' && !bubEl.hidden && !force) return;
+      bubKey = 'egg';
+      bubEl.hidden = false;
+      bubEl.classList.add('calm');
+      bubEl.textContent = '';
+      const t = document.createElement('div'); t.className = 'b-title'; t.textContent = 'Something’s moving in here…';
+      const dd = document.createElement('div'); dd.className = 'b-detail'; dd.textContent = 'Click me to hatch me!';
+      const tail = document.createElement('div'); tail.className = 'b-tail';
+      bubEl.append(t, dd, tail);
+      bubEl.style.top = 'auto';
+      bubEl.style.bottom = aboveBuddyBottomCss(10);
+      bubEl.style.maxWidth = Math.min(320, window.innerWidth - 16) + 'px';
+      placeCenteredOnBuddy(bubEl);
+      reportBounds();
+      return;
+    }
+    const show = !!(d && d.top) && popEl.hidden && askEl.hidden && chatEl.hidden
       && (d.state === 'needs_input' || d.state === 'clock' || d.state === 'package');
     if (!show) {
       if (!bubEl.hidden) { bubEl.hidden = true; bubKey = ''; reportBounds(); }
@@ -1438,7 +1642,7 @@
     sendToClaude(
       'Using the clawd skill, here is a task from Claw’d. Tell me what you plan to do first, '
       + 'and wait for my OK before sending, posting, or changing anything.\n\nTask: ' + task,
-      'Sent to Claude.');
+      'Got it! I asked Claude.');
     flourish('working', 2500, true);
   });
 
@@ -1561,6 +1765,8 @@
 
   // a plain click on him: the popover, and a happy wiggle if he is free
   function clickBuddy() {
+    if (!hatched) { clickEgg(); return; }
+    if (!introDone() && chatEl.hidden) { askCurrent(); return; } // pick up where we left off
     const opening = popEl.hidden;
     setPopover(opening);
     voice.chirp(null, 'light'); // a little happy noise every time he is clicked
@@ -1738,10 +1944,12 @@
     listen('walk-done', () => finishWalk(true));
     listen('tray', (e) => {
       if (e.payload === 'home') invoke('go_to_taskbar', { centerX: null }).then(refreshTaskbar);
+      else if (e.payload === 'restart') startOver();
       else summon();
     });
     refreshTaskbar();
-    setInterval(refreshTaskbar, 30000); // the taskbar can move, resize or auto-hide
+    setInterval(refreshTaskbar, 30000);
+    if (!userName) invoke('load_intro').then((v) => { if (v && v.name && !userName) setUserName(String(v.name)); }); // the taskbar can move, resize or auto-hide
     // listener FIRST, then the snapshot, so a stale snapshot can never
     // overwrite a raced-in live event
     let gotLive = false;
@@ -1756,7 +1964,7 @@
   // debug/test handle
   window.__clawd = {
     pet, setState, setStyle: setArtStyle, setPopover, renderPopover, feed, treatLayer, voice, setMode,
-    showAsk, tick, derive, demoInbox, life, setTuck, walkTo, stroll, peekOnce, refreshTaskbar,
+    showAsk, tick, derive, demoInbox, life, hatchNow, startOver, askCurrent, get hatched() { return hatched; }, setTuck, walkTo, stroll, peekOnce, refreshTaskbar,
     get inbox() { return inbox; }, set inbox(p) { inbox = p; tick(); renderPopover(); },
     get derived() { return derived; }, get treats() { return treats; }, get announced() { return announced; },
   };
