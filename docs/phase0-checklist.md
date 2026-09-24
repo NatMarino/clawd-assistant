@@ -37,6 +37,15 @@ to check. Tick it, or note what happened, and the plan adjusts.
       morning digest as an artifact and give you the link. If artifacts aren't
       available, the digest arrives as a few short notes instead.
 
+## For v0.3 (voice)
+
+- [ ] **Is Windows online speech recognition allowed?** Settings, then Privacy &
+      security, then Speech: is *Online speech recognition* on, and can you turn
+      it on, or is it greyed out by policy? This decides which recogniser v0.3
+      uses (see docs/v0.3-plan.md).
+- [ ] **Does Windows voice typing work?** Press Win+H in any text box and say a
+      sentence. This is the last-resort fallback.
+
 ## Checked on the personal laptop (2026-09-24)
 
 - Rust builds locally (Smart App Control no longer blocks the compiler here), and
