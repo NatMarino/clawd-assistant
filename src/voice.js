@@ -56,6 +56,9 @@ const PREFERRED = ['Mark', 'Guy', 'David', 'Zira'];
 
 const DEFAULTS = {
   enabled: true,
+  // 'words': he says his lines in the chosen voice. 'animalese': he chatters
+  // instead (the words are on screen), like the villagers in Animal Crossing.
+  style: 'words',
   backend: 'system',
   voiceName: '',   // '' = fall back to PREFERRED, then the browser default
   volume: 0.9,
@@ -295,6 +298,7 @@ const CHIRPS = {
   up:    { lift: 1.0,  gap: 0.055, decay: 0.075, level: 0.22, contours: [[0, 0.14, 0.28], [0, 0.1, 0.24, 0.3], [0, 0.18, 0.12, 0.3]] },
   happy: { lift: 1.05, gap: 0.05,  decay: 0.07,  level: 0.22, contours: [[0, 0.16, 0.32, 0.2, 0.4], [0, 0.24, 0.12, 0.36], [0.1, 0, 0.2, 0.3, 0.44]] },
   light: { lift: 1.4,  gap: 0.04,  decay: 0.04,  level: 0.07, contours: [[0, 0.18], [0, 0.22], [0.1, 0.26], [0, 0.14]] },
+  talk: { lift: 1.0, gap: 0.065, decay: 0.06, level: 0.18, contours: [[0, 0.2, 0.08, 0.3, 0.14, 0.24], [0.1, 0, 0.26, 0.12, 0.34, 0.18], [0.05, 0.22, 0.1, 0.02, 0.28, 0.16]] },
   muffled: { lift: 0.8, gap: 0.07, decay: 0.09, level: 0.16, lp: 650, contours: [[0, 0.05, 0.3], [0.05, 0, 0.35], [0, 0.1, 0.05, 0.4]] },
   excited: { lift: 0.9, gap: 0.05, decay: 0.07, level: 0.18, lp: 700, contours: [[0, 0.2, 0.1, 0.35, 0.25, 0.45], [0.1, 0.3, 0.2, 0.4, 0.5]] },
   flat:  { lift: 1.0,  gap: 0.055, decay: 0.075, level: 0.22, contours: [[0, 0.07], [0.07, 0], [0, 0.07, 0]] },
@@ -303,7 +307,7 @@ const CHIRPS = {
 // `count` trims (or repeats) the chosen contour; omit it for the contour's own
 // length. Returns false when sounds are off.
 function chirp(count, shape = 'up') {
-  if (!settings.enabled || !settings.chirp) return false;
+  if (!settings.enabled || (!settings.chirp && shape !== 'talk')) return false;
   const ctx = audioCtx();
   if (!ctx) return false;
   const mood = CHIRPS[shape] || CHIRPS.up;
@@ -338,10 +342,137 @@ function chirp(count, shape = 'up') {
 // muffled blips about as long as the line, so it reads as him mumbling
 // through the shell. (The speech engine can't be muffled, and words would
 // give away that he's not out yet.)
-function babble(text) {
-  const words = String(text || '').split(/\s+/).filter(Boolean).length;
-  const n = Math.max(3, Math.min(12, Math.round(words * 0.8)));
-  return chirp(n, 'muffled');
+function babble(text, mood = 'muffled') {
+  return animalese(text, { muffled: mood === 'muffled' });
+}
+let chatterUntil = 0;
+
+// --- animalese: his sentence, letter by letter ------------------------
+//
+// Every letter gets its own tiny sound, fast, the way the villagers in Animal
+// Crossing talk. Vowels are little sung vowels (a sawtooth through two
+// band-pass "mouth" filters at that vowel's formants, so a/e/i/o/u each sound
+// different); consonants are what the mouth does for them: s/f/h/sh hiss,
+// p/t/k click, b/d/g click with voice, m/n hum, l/r/w/y glide. Spaces and
+// punctuation are pauses, and a question lifts at the end. `muffled` runs
+// it all through the eggshell (a low-pass) for before he hatches.
+const VOWELS = {
+  a: [800, 1200], e: [500, 1900], i: [320, 2300], o: [500, 900], u: [350, 800], y: [320, 2100],
+};
+const SCHWA = [500, 1500];
+const HISS = { s: [6000, 3], z: [5500, 3], c: [5000, 2.5], f: [4000, 1.2], v: [3800, 1.2], h: [1500, 0.7], x: [5000, 2], j: [2800, 2], q: [2500, 2] };
+const CLICK = { p: [1500, false], t: [3500, false], k: [2500, false], b: [1200, true], d: [2800, true], g: [2200, true] };
+const HUM = { m: [250, 1100], n: [250, 1600] };
+const GLIDE = { l: [400, 1200], r: [450, 1300], w: [300, 700] };
+
+function animalese(text, { muffled = false } = {}) {
+  if (!settings.enabled) return false;
+  const ctx = audioCtx();
+  if (!ctx) return false;
+  const clean = String(text || '').toLowerCase().replace(/[^a-z0-9 .,!?'’-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+  if (!clean) return false;
+  const vol = Math.max(0, Math.min(1, Number(settings.volume))) * (muffled ? 0.55 : 0.5);
+  const pitch = Math.max(0.6, Number(settings.pitch) || 1);
+  const f0Base = 170 * pitch * (muffled ? 0.85 : 1);
+  const out = ctx.createGain();
+  out.gain.value = vol;
+  let dest = out;
+  if (muffled) {
+    const shell = ctx.createBiquadFilter();
+    shell.type = 'lowpass';
+    shell.frequency.value = 700;
+    out.connect(shell);
+    shell.connect(ctx.destination);
+  } else {
+    out.connect(ctx.destination);
+  }
+  if (!noiseBuf) {
+    noiseBuf = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.2), ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+
+  const t0 = ctx.currentTime + 0.01;
+  let t = t0;
+  const letters = [...clean];
+  const question = /\?\s*$/.test(clean);
+  const n = letters.length;
+
+  // one sung vowel-ish sound: sawtooth at f0 through two formant filters
+  const voiced = (at, dur, f0, [f1, f2], level = 1) => {
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f0, at);
+    o.frequency.linearRampToValueAtTime(f0 * 0.97, at + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.linearRampToValueAtTime(0.5 * level, at + 0.008);
+    g.gain.setValueAtTime(0.5 * level, at + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    for (const [fr, q, amt] of [[f1, 6, 1], [f2, 9, 0.6]]) {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = fr;
+      bp.Q.value = q;
+      const a = ctx.createGain();
+      a.gain.value = amt * 2.2;
+      o.connect(bp); bp.connect(a); a.connect(g);
+    }
+    g.connect(dest);
+    o.start(at);
+    o.stop(at + dur + 0.02);
+  };
+  const noise = (at, dur, freq, q, level = 1) => {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = freq;
+    bp.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.linearRampToValueAtTime(0.35 * level, at + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    src.connect(bp); bp.connect(g); g.connect(dest);
+    src.start(at, Math.random() * 0.1);
+    src.stop(at + dur + 0.01);
+  };
+
+  letters.forEach((ch, i) => {
+    // the pitch contour: each letter a little different (seeded by the
+    // letter, so the same word sounds the same), falling gently through the
+    // sentence, rising over the last few letters of a question
+    const seed = ((ch.charCodeAt(0) * 37 + i * 11) % 23) / 23 - 0.5;
+    const fall = 1 - 0.12 * (i / Math.max(1, n));
+    const lift = question && i > n - 5 ? 1 + 0.08 * (i - (n - 5)) : 1;
+    const f0 = f0Base * (1 + seed * 0.14) * fall * lift;
+    if (ch === ' ') { t += 0.035; return; }
+    if (ch === ',' || ch === '-') { t += 0.12; return; }
+    if (ch === '.' || ch === '!' || ch === '?') { t += 0.2; return; }
+    if (ch === "'" || ch === '’') return;
+    if (/[0-9]/.test(ch)) { voiced(t, 0.06, f0, SCHWA); t += 0.066; return; }
+    if (VOWELS[ch]) { voiced(t, 0.07, f0, VOWELS[ch]); t += 0.068; return; }
+    if (HISS[ch]) { noise(t, 0.045, HISS[ch][0], HISS[ch][1], 0.8); t += 0.05; return; }
+    if (CLICK[ch]) {
+      noise(t, 0.018, CLICK[ch][0], 1.5, 1);
+      if (CLICK[ch][1]) voiced(t + 0.01, 0.035, f0, SCHWA, 0.7);
+      t += 0.045;
+      return;
+    }
+    if (HUM[ch]) { voiced(t, 0.05, f0, HUM[ch], 0.7); t += 0.05; return; }
+    if (GLIDE[ch]) { voiced(t, 0.05, f0, GLIDE[ch], 0.8); t += 0.05; return; }
+    voiced(t, 0.045, f0, SCHWA, 0.6);
+    t += 0.047;
+  });
+
+  const ms = (t - t0) * 1000 + 120;
+  chatterUntil = Date.now() + ms;
+  // his body bobs for exactly as long as he chatters (the chirp squint only
+  // for the egg's mumbling, which isn't him yet)
+  setSpeaking(true, 'speech');
+  clearTimeout(speakingOffTimer);
+  speakingOffTimer = setTimeout(() => setSpeaking(false, 'speech'), ms);
+  return true;
 }
 
 // Create and wake the audio engine now (from a first pointerdown), so the
@@ -465,6 +596,10 @@ function stop() { Object.values(BACKENDS).forEach((b) => { try { b.stop(); } cat
 // Test and voice-pick buttons, which are about hearing him).
 async function say(text, { force = false } = {}) {
   if (!text || (!settings.enabled && !force)) return false;
+  if (settings.style === 'animalese') {
+    lastSpokeAt = Date.now();
+    return animalese(sanitise(text));
+  }
   lastSpokeAt = Date.now();
   const b = await backend();
   try { b.speak(text); return true; } catch (err) { console.warn('speak failed', err); return false; }
@@ -476,7 +611,7 @@ async function say(text, { force = false } = {}) {
 async function announce(text) {
   if (!settings.enabled) return null;
   if (Date.now() - lastSpokeAt < MIN_GAP_MS) return false;
-  if (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking) return false;
+  if (isSpeaking()) return false;
   await say(text);
   return text;
 }
@@ -487,13 +622,13 @@ async function announce(text) {
 function canAnnounce() {
   if (!settings.enabled) return false;
   if (Date.now() - lastSpokeAt < MIN_GAP_MS) return false;
-  return !(typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking);
+  return !isSpeaking();
 }
 function isSpeaking() {
-  return typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking;
+  return Date.now() < chatterUntil || (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking);
 }
 
 export {
-  announce, canAnnounce, isSpeaking, setName, babble, warmAudio, crack, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
+  announce, canAnnounce, isSpeaking, setName, babble, warmAudio, crack, animalese, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
   lineForItem, sanitise, systemBackend, DEFAULTS, LIMITS,
 };

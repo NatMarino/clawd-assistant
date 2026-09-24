@@ -159,6 +159,23 @@
   #askbox .msg.you { background: #c1694f; color: #fff3ea; align-self: flex-end; border-bottom-right-radius: 3px; }
   #askbox .msg.typing { color: #b9b2ab; letter-spacing: 2px; }
   #askbox .msg-actions { display: flex; gap: 6px; }
+  /* a message about to go to someone: laid out like the real thing */
+  #askbox .draft {
+    align-self: stretch; background: #f7f4f0; color: #2b2724; border-radius: 10px;
+    border: 1px solid #d9d0c6; padding: 8px 10px; font-size: 13px; line-height: 1.4;
+  }
+  #askbox .draft .d-app { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #8a7f74; margin-bottom: 4px; }
+  #askbox .draft .d-field { color: #6f6660; }
+  #askbox .draft .d-field b { color: #2b2724; font-weight: 600; }
+  #askbox .draft .d-body { margin-top: 6px; padding-top: 6px; border-top: 1px solid #e3dcd4; white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow-y: auto; }
+  #askbox .draft .d-actions { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  #askbox .draft .send {
+    font: inherit; font-weight: 700; font-size: 13px; cursor: pointer; border: none; border-radius: 8px;
+    padding: 6px 16px; background: #c1694f; color: #fff;
+  }
+  #askbox .draft .send:hover { background: #d27a60; }
+  #askbox .draft .change { font: inherit; font-size: 12px; cursor: pointer; background: none; border: none; color: #8a7f74; text-decoration: underline; }
+  #askbox .draft .d-sent { color: #4c7a3f; font-weight: 700; }
   #askbox input {
     width: 100%; box-sizing: border-box; font: inherit; font-size: 14px;
     background: #2a2a31; color: #f1ebe5; border: 1px solid #555; border-radius: 8px;
@@ -320,6 +337,9 @@
     <button data-theme="system">system</button>
     <button data-theme="dark">dark</button>
     <button data-theme="light">light</button>
+  </div>
+  <div id="custom-row" class="theme-row" hidden>
+    <button id="custom-btn">customize how I look and sound…</button>
   </div>
   <div id="art-row" class="theme-row" hidden>
     <span class="lbl">skin:</span>
@@ -561,7 +581,10 @@
   const voicePickRow = document.getElementById('voice-pick');
   const toneRow = document.getElementById('voice-tone');
   const gearBtn = document.getElementById('gearbtn');
-  const SETTINGS_ROWS = [modeRow, themeRow, artRow, voiceRow, voicePickRow, toneRow];
+  const customRow = document.getElementById('custom-row');
+  // the gear: mode, theme, and one Customize button (skin, voice, pitch and
+  // size live in the picker it opens, the same one as during setup)
+  const SETTINGS_ROWS = [modeRow, themeRow, customRow];
 
   let panelTheme = 'system';
   try { panelTheme = localStorage.getItem('panelTheme') || 'system'; } catch {}
@@ -590,6 +613,7 @@
     SETTINGS_ROWS.forEach((r) => { r.hidden = !show; });
     reportBounds();
   };
+  document.getElementById('custom-btn').onclick = (e) => { e.stopPropagation(); setPopover(false); customize(); };
   themeRow.querySelectorAll('button[data-theme]').forEach((b) => {
     b.onclick = (e) => { e.stopPropagation(); setPanelTheme(b.dataset.theme); };
   });
@@ -1187,7 +1211,8 @@
     chatEl.style.bottom = aboveBuddyBottomCss(10);
   }
   function panel({ title, sub = '', chips = null, multi = false, other = false, input = false,
-    placeholder = '', buttons = [], skip = false, muffled = false, speak = null } = {}) {
+    placeholder = '', buttons = [], skip = false, muffled = false, speak = null,
+    selected = [], onChip = null } = {}) {
     return new Promise((resolve) => {
       if (panelResolve) panelResolve(null);
       panelResolve = resolve;
@@ -1206,10 +1231,12 @@
         const b = document.createElement('button');
         b.className = 'chip';
         b.textContent = c;
+        if (selected.includes(c)) { picked.add(c); b.classList.add('on'); }
         b.onclick = (e) => {
           e.stopPropagation();
           if (!multi) { picked.clear(); chatChips.querySelectorAll('.chip').forEach((x) => x.classList.remove('on')); }
-          if (picked.has(c)) { picked.delete(c); b.classList.remove('on'); } else { picked.add(c); b.classList.add('on'); }
+          if (picked.has(c) && multi) { picked.delete(c); b.classList.remove('on'); } else { picked.add(c); b.classList.add('on'); }
+          if (onChip) onChip(c);
         };
         chatChips.appendChild(b);
       }
@@ -1310,6 +1337,59 @@
   }
 
   const listNames = (names) => names.length < 2 ? names.join('') : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+
+  // --- How should I sound (and how big should I be)? During setup, in the
+  //     egg, and any time from the gear's Customize button. Every tap
+  //     previews: a sample line, or him growing and shrinking. ---
+  const SAMPLE = 'Hi! This is how I’d sound. What do you think?';
+  const STYLES_SOUND = ['My words', 'Animalese only', 'No sound'];
+  const PITCHES = [['Lower', 1.4], ['Normal', 1.8], ['Higher', 2.0]];
+  const SIZES = [['Small', 1.0], ['Medium', 1.4], ['Big', 1.75], ['Huge', 2.3]];
+  const shortVoice = (n) => n.replace(/^Microsoft\s+/i, '').replace(/\s*[-–(].*$/, '').trim() || n;
+  const nearest = (list, v) => list.reduce((b, x) => (Math.abs(x[1] - v) < Math.abs(b[1] - v) ? x : b))[0];
+
+  async function customize({ inEgg = false } = {}) {
+    const v = voice.get();
+    const current = !v.enabled ? 'No sound' : v.style === 'animalese' ? 'Animalese only' : 'My words';
+    const setStyle = (c) => {
+      if (c === 'No sound') { voice.stop(); voice.set({ enabled: false }); return; }
+      voice.set({ enabled: true, style: c === 'Animalese only' ? 'animalese' : 'words' });
+      voice.say(SAMPLE);
+    };
+    const style = await panel({ title: 'How should I sound?', sub: 'Tap one to hear it.', chips: STYLES_SOUND,
+      selected: [current], onChip: setStyle, buttons: [{ label: 'Next', primary: true }], muffled: inEgg });
+    if (!style) return;
+    const soundOn = voice.get().enabled;
+
+    if (soundOn && voice.get().style !== 'animalese') {
+      const list = voice.systemBackend.voices().slice(0, 8);
+      if (list.length > 1) {
+        const names = list.map((x) => shortVoice(x.name));
+        const chosen = list.find((x) => x.name === voice.get().voiceName);
+        await panel({ title: 'Which voice is me?', sub: 'Tap to hear each one.', chips: names,
+          selected: chosen ? [shortVoice(chosen.name)] : [],
+          onChip: (c) => { const x = list[names.indexOf(c)]; if (x) { voice.set({ voiceName: x.name }); voice.say(SAMPLE); } },
+          buttons: [{ label: 'Next', primary: true }], muffled: inEgg });
+      }
+    }
+    if (soundOn) {
+      await panel({ title: 'How high is my voice?', chips: PITCHES.map((p) => p[0]),
+        selected: [nearest(PITCHES, voice.get().pitch)],
+        onChip: (c) => { voice.set({ pitch: PITCHES.find((p) => p[0] === c)[1] }); voice.say(SAMPLE); },
+        buttons: [{ label: 'Next', primary: true }], muffled: inEgg });
+    }
+    await panel({ title: 'How big should I be?', sub: 'I’ll try each size on.', chips: SIZES.map((x) => x[0]),
+      selected: [nearest(SIZES, pet.scale)],
+      onChip: (c) => { resizeTo(SIZES.find((x) => x[0] === c)[1]); setTimeout(placeChat, 250); },
+      buttons: [{ label: inEgg ? 'Next' : 'Done', primary: true }], muffled: inEgg });
+    if (!inEgg) {
+      await panel({ title: 'And my look?', chips: ['Terminal (CLI)', 'App'],
+        selected: [artStyle === 'cli' ? 'Terminal (CLI)' : 'App'],
+        onChip: (c) => setArtStyle(c === 'App' ? 'app' : 'cli'),
+        buttons: [{ label: 'Done', primary: true }] });
+      voice.chirp(null, 'happy');
+    }
+  }
 
   // --- B: you click the egg ---
   let eggAsked = false;
@@ -1443,6 +1523,7 @@
     const picks = await askUses();
     if (!picks) return;
     await saveIntro(picks);
+    await customize({ inEgg: true });
     await okApps(st);
     for (;;) {
       setup = { stage: 'running', crack: 0, summary: null };
@@ -2035,7 +2116,10 @@
   let threadAt = 0;
   let threadActions = null; // buttons under his latest message
   let threadTyping = false;
-  const saveThread = () => { thread = thread.slice(-50); try { localStorage.setItem('thread', JSON.stringify(thread)); } catch {} };
+  const saveThread = () => {
+    thread = thread.slice(-50);
+    try { localStorage.setItem('thread', JSON.stringify(thread, (k, v) => (k === 'onSend' ? undefined : v))); } catch {}
+  };
 
   function renderThread() {
     askLog.textContent = '';
@@ -2045,12 +2129,14 @@
       e.textContent = userName ? `Hi ${userName}! What can I do for you?` : 'Hi! What can I do for you?';
       askLog.appendChild(e);
     }
-    for (const m of thread.slice(-20)) {
+    const recent = thread.slice(-20);
+    recent.forEach((m, i) => {
       const e = document.createElement('div');
       e.className = 'msg ' + m.who;
       e.textContent = m.text;
       askLog.appendChild(e);
-    }
+      if (m.card) askLog.appendChild(draftCard(m, i === recent.length - 1));
+    });
     if (threadActions) {
       const row = document.createElement('div');
       row.className = 'msg-actions';
@@ -2072,8 +2158,69 @@
     askLog.scrollTop = askLog.scrollHeight;
     if (!askEl.hidden) { askEl.style.bottom = aboveBuddyBottomCss(10); reportBounds(); }
   }
-  function addMsg(who, text, actions = null) {
-    thread.push({ who, text, t: Date.now() });
+  // A message he's about to send for you, as a card: which app, to whom,
+  // the subject and the message, with a real Send button. Only the newest
+  // card is live; once sent it says so.
+  function draftCard(m, live) {
+    const c = m.card;
+    const card = document.createElement('div');
+    card.className = 'draft';
+    const app = document.createElement('div');
+    app.className = 'd-app';
+    app.textContent = c.app ? `New ${c.app} message` : 'New message';
+    card.appendChild(app);
+    const field = (label, value) => {
+      if (!value) return;
+      const f = document.createElement('div');
+      f.className = 'd-field';
+      f.append(label + ' ');
+      const b = document.createElement('b');
+      b.textContent = value;
+      f.appendChild(b);
+      card.appendChild(f);
+    };
+    field('To', c.to);
+    field('Subject', c.subject);
+    if (c.body) {
+      const body = document.createElement('div');
+      body.className = 'd-body';
+      body.textContent = c.body;
+      card.appendChild(body);
+    }
+    const row = document.createElement('div');
+    row.className = 'd-actions';
+    if (c.sent) {
+      const done = document.createElement('span');
+      done.className = 'd-sent';
+      done.textContent = 'Sent ✓';
+      row.appendChild(done);
+    } else if (c.sending) {
+      const going = document.createElement('span');
+      going.className = 'd-field';
+      going.textContent = 'Sending…';
+      row.appendChild(going);
+    } else if (live && c.onSend) {
+      const send = document.createElement('button');
+      send.className = 'send';
+      send.textContent = 'Send';
+      send.onclick = (e) => { e.stopPropagation(); c.onSend(); };
+      const change = document.createElement('button');
+      change.className = 'change';
+      change.textContent = 'Change it';
+      change.onclick = (e) => { e.stopPropagation(); askInput.placeholder = 'What should I change?'; askInput.focus(); };
+      row.append(send, change);
+    } else {
+      const idle = document.createElement('span');
+      idle.className = 'd-field';
+      idle.textContent = 'Not sent';
+      row.appendChild(idle);
+    }
+    card.appendChild(row);
+    return card;
+  }
+
+  function addMsg(who, text, actions = null, card = null) {
+    thread.push({ who, text, t: Date.now(), card });
     threadActions = actions;
     saveThread();
     renderThread();
@@ -2147,7 +2294,7 @@
     await think(`Job: request\nMode: ${plan ? 'ask first' : 'auto'}\nNow: ${new Date().toString()}\n\n${about ? 'About: ' + about + '\n\n' : ''}${text}`, { plan });
   }
 
-  async function think(prompt, { plan = false, alsoAllow = [], resume = null } = {}) {
+  async function think(prompt, { plan = false, alsoAllow = [], resume = null, quiet = false } = {}) {
     threadTyping = true;
     threadActions = null;
     renderThread();
@@ -2162,20 +2309,33 @@
       const line = errorLine(r.text);
       addMsg('him', line, r.text === 'not-logged-in' ? [{ label: 'Log me in', primary: true, run: () => brain.open('login') }] : null);
       voice.say(line);
-      return;
+      return false;
     }
     const reply = String(r.text || r.texts[r.texts.length - 1] || '').trim() || 'Done!';
     const sends = (r.denials || []).filter((d) => String(d.tool).startsWith('mcp__'));
     if (sends.length) {
       const d = describeSend(sends[0]);
-      const card = `Here’s what I’ll send${d.to ? ' to ' + d.to : ''}:` + (d.subject ? `\n${d.subject}` : '') + (d.body ? `\n\n${d.body}` : '');
-      addMsg('him', card, [
-        { label: 'Send it', primary: true, run: () => think('Yes, send it exactly as drafted.', { resume: threadSession, alsoAllow: [sends[0].tool] }) },
-        { label: 'Change it', run: () => { askInput.placeholder = 'What should I change?'; askInput.focus(); } },
-      ]);
+      const appName = (String(sends[0].tool).match(/^mcp__(?:claude_ai_)?([^_]+(?:_[A-Z][a-z]+)*)__/) || [])[1];
+      const card = { app: appName ? appName.replace(/_/g, ' ') : '', to: d.to, subject: d.subject, body: d.body, sent: false };
+      const tool = sends[0].tool;
+      card.onSend = async () => {
+        card.onSend = null;
+        card.sending = true;
+        renderThread();
+        const ok = await think('Yes, send it exactly as drafted.', { resume: threadSession, alsoAllow: [tool], quiet: true });
+        card.sending = false;
+        if (ok) {
+          card.sent = true;
+          saveThread();
+          renderThread();
+          flourish('happy_wiggle', null, true);
+          voice.chirp(null, 'happy');
+        }
+      };
+      addMsg('him', `Here’s what I’ll send${d.to ? ' to ' + firstName(d.to) : ''}:`, null, card);
       voice.say(`Here’s what I’ll send${d.to ? ' to ' + firstName(d.to) : ''}. Should I send it?`);
       if (askEl.hidden) showAsk();
-      return;
+      return false;
     }
     if (plan) {
       addMsg('him', reply, [
@@ -2183,11 +2343,12 @@
         { label: 'Never mind', run: () => addMsg('him', 'OK, never mind!') },
       ]);
       voice.say(spokenLine(reply));
-      return;
+      return true;
     }
     addMsg('him', reply);
     voice.say(spokenLine(reply));
-    if (askEl.hidden) showToast(spokenLine(reply));
+    if (askEl.hidden && !quiet) showToast(spokenLine(reply));
+    return true;
   }
 
   let toastTimer = null;
