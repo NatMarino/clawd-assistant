@@ -1265,6 +1265,15 @@
     lastNote = { title, sub, muffled };
     panel({ title, sub, muffled });
   }
+  // change the second line of what he's showing, quietly
+  function noteSub(sub) {
+    if (chatEl.hidden || !lastNote) return;
+    lastNote = { ...lastNote, sub };
+    chatSub.textContent = sub;
+    chatSub.hidden = !sub;
+    placeChat();
+    reportBounds();
+  }
   function closeChat() {
     if (chatEl.hidden) return;
     chatEl.hidden = true;
@@ -1401,6 +1410,19 @@
   }
 
   const STAGE_TEXT = ['', 'Getting to know how you work…', 'Setting up what you picked…', 'Almost ready…'];
+  // what the big brain is looking at right now, from the tool it's using
+  function toolWords(tool) {
+    const t = String(tool || '').toLowerCase();
+    if (/calendar|gcal|event/.test(t)) return 'Peeking at your calendar…';
+    if (/slack|teams|chat/.test(t)) return 'Looking through your messages…';
+    if (/gmail|mail|outlook/.test(t)) return 'Skimming your email…';
+    if (/granola|otter|fireflies|meeting|transcript/.test(t)) return 'Reading your meeting notes…';
+    if (/asana|linear|jira|task|todo/.test(t)) return 'Checking your tasks…';
+    if (/drive|docs|notion|file|confluence/.test(t)) return 'Looking at your docs…';
+    if (/^(write|edit)$/.test(t)) return 'Writing down what I learned…';
+    if (/^(read|glob|grep)$/.test(t)) return 'Reading my notes…';
+    return 'Thinking…';
+  }
 
   async function runSetup() {
     if (!brain) return;
@@ -1413,22 +1435,31 @@
     for (;;) {
       setup = { stage: 'running', crack: 0, summary: null };
       saveSetup(); tick();
+      voice.crack(1);
       note(STAGE_TEXT[1]);
+      // a long quiet stretch is the big brain reading, not him being stuck
+      let lastEventAt = Date.now();
+      const patience = setInterval(() => {
+        if (Date.now() - lastEventAt > 40000) noteSub('This part takes a minute…');
+      }, 10000);
       const r = await brain.run({
         prompt: `Job: setup\nNow: ${new Date().toString()}`,
         model: MODELS.main,
         maxTurns: 60,
         onEvent: (ev) => {
+          lastEventAt = Date.now();
+          if (ev.kind === 'tool') { noteSub(toolWords(ev.text)); return; }
           if (ev.kind !== 'text') return;
           const n = readStage(ev.text);
           if (n > setup.crack) {
             setup.crack = Math.min(3, n);
             saveSetup(); tick();
-            voice.chirp(null, 'muffled');
+            voice.crack(setup.crack);
             note(STAGE_TEXT[setup.crack] || STAGE_TEXT[3]);
           }
         },
       });
+      clearInterval(patience);
       if (!r.is_error) {
         setup = { stage: 'ready', crack: 3, summary: readSummary([...r.texts, r.text]) || {} };
         saveSetup(); tick();
@@ -1452,7 +1483,8 @@
     bubEl.hidden = true;
     setTuck(false, true);
     const release = hold('hatch', true);
-    setTimeout(() => voice.chirp(null, 'muffled'), 250);
+    setTimeout(() => voice.crack(2), 150);
+    setTimeout(() => voice.crack(3), HATCH_MS - 700);
     setTimeout(() => voice.chirp(null, 'happy'), HATCH_MS - 300);
     setTimeout(async () => {
       hatched = true;

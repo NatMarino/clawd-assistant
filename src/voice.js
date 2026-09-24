@@ -348,6 +348,55 @@ function babble(text) {
 // first click chirp isn't the one that pays for starting it up.
 function warmAudio() { audioCtx(); }
 
+// The egg cracking: `size` quick, dry, high snaps (a sliver of filtered
+// noise) each with a tiny downward chip on top, in his chirp register so it
+// sounds like the same little creature. 1 for a hairline, 3 for the big one.
+function crack(size = 1) {
+  if (!settings.enabled || !settings.chirp) return false;
+  const ctx = audioCtx();
+  if (!ctx) return false;
+  const vol = Math.max(0, Math.min(1, Number(settings.volume)));
+  const base = 300 * Math.max(0.6, Number(settings.pitch) || 1);
+  if (!noiseBuf) {
+    noiseBuf = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.2), ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const snaps = Math.max(1, Math.min(4, size + (size > 1 ? 1 : 0)));
+  let t = ctx.currentTime + 0.002;
+  for (let i = 0; i < snaps; i++) {
+    const wob = 0.85 + Math.random() * 0.3;
+    // the snap
+    const n = ctx.createBufferSource();
+    n.buffer = noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 3200 * wob;
+    bp.Q.value = 1.6;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.0001, t);
+    ng.gain.linearRampToValueAtTime(vol * (0.22 + 0.06 * size), t + 0.002);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+    n.connect(bp); bp.connect(ng); ng.connect(ctx.destination);
+    n.start(t, Math.random() * 0.1);
+    n.stop(t + 0.05);
+    // the chip: a high blip falling fast
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(base * 2.4 * wob, t);
+    o.frequency.exponentialRampToValueAtTime(base * 1.3 * wob, t + 0.05);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.linearRampToValueAtTime(vol * 0.12, t + 0.003);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+    o.connect(og); og.connect(ctx.destination);
+    o.start(t);
+    o.stop(t + 0.07);
+    t += 0.045 + Math.random() * 0.035; // crk-crk, never evenly spaced
+  }
+  return true;
+}
+
 // One "monch": a soft crunch (filtered noise) over a little low thump that
 // drops in pitch, like a mouthful. Timed by the host to each bite frame.
 let noiseBuf = null;
@@ -445,6 +494,6 @@ function isSpeaking() {
 }
 
 export {
-  announce, canAnnounce, isSpeaking, setName, babble, warmAudio, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
+  announce, canAnnounce, isSpeaking, setName, babble, warmAudio, crack, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
   lineForItem, sanitise, systemBackend, DEFAULTS, LIMITS,
 };
