@@ -374,6 +374,12 @@ fn add_local_items(tx: tauri::State<state::EventSender>, json: String) -> bool {
     }
 }
 
+/// A line from the page for page.log (errors, and what was clicked).
+#[tauri::command]
+fn page_log(line: String) {
+    brain::log_to("page.log", &line.chars().take(1000).collect::<String>());
+}
+
 #[tauri::command]
 fn stop_walk(state: tauri::State<AppState>) {
     *state.walk.lock_or_recover() = None;
@@ -669,7 +675,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             set_opaque_bounds, start_drag, end_drag, set_pet_scale, get_pet_scale, quit_app,
             open_link, ask_claude, taskbar_info, go_to_taskbar, walk_to, stop_walk, report_anchor, save_intro, load_intro,
-            brain_status, brain_run, brain_stop, brain_open, read_prefs, add_local_items,
+            brain_status, brain_run, brain_stop, brain_open, read_prefs, add_local_items, page_log,
             state::get_pet_state, state::dismiss_item, state::hand_off_item
         ])
         .setup(move |app| {

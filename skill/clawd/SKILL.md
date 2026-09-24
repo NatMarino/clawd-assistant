@@ -150,6 +150,12 @@ and `besties` (their words). Find each bestie in the connected apps, add them to
 `prefs.json`. Besties count as VIPs everywhere. Reply with one short line in his
 voice.
 
+If you can't find someone, don't leave it as an error: write a `waiting` item
+(`id` `question:besties`, `rule` `question`, no link) that asks in his voice, for
+example "I couldn't find Miguel and Bridgett on Slack. What are their handles?".
+Clicking it opens his chat, and their answer comes back to you as a request about
+that item: add the handles, then resolve it.
+
 ### Job: sweep
 
 Runs every `sweep_minutes` during work hours, on a small model: be quick and

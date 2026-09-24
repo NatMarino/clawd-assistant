@@ -399,6 +399,18 @@
   const invoke = IS_TAURI ? window.__TAURI__.core.invoke : null;
   // the big brain: Claude Code, run by him in the background (brain.js)
   const brain = IS_TAURI ? createBrain(invoke, window.__TAURI__.event.listen) : null;
+  // page.log in %APPDATA%\ClawdAssistant: every error, plus a short trail of
+  // what happened before it (clicks, panels), for machines we can't see
+  const trail = [];
+  function plog(what) {
+    trail.push(new Date().toTimeString().slice(0, 8) + ' ' + what);
+    if (trail.length > 12) trail.shift();
+  }
+  function perr(msg) {
+    if (IS_TAURI) invoke('page_log', { line: 'ERROR ' + msg + ' | trail: ' + trail.join(' > ') }).catch(() => {});
+  }
+  window.addEventListener('error', (e) => perr(`${e.message} at ${e.filename || ''}:${e.lineno || ''}`));
+  window.addEventListener('unhandledrejection', (e) => perr('promise: ' + String(e.reason && (e.reason.stack || e.reason))));
 
   // art style (app mascot / CLI mascot): persisted like the panel theme.
   // The assistant defaults to the CLI buddy: it is the skin the animation
@@ -1522,7 +1534,7 @@
       await saveIntro({ besties });
       await sayAndWait('Ooh, they seem really nice!');
     }
-    if (brainOk) brain.run({ prompt: 'Job: besties', model: MODELS.main, maxTurns: 25 }).then(loadPrefs);
+    const bestiesDone = brainOk ? brain.run({ prompt: 'Job: besties', model: MODELS.main, maxTurns: 25 }).then(loadPrefs) : Promise.resolve();
     // G: what the big brain found out
     const s = setup.summary || {};
     if (s.hours) {
@@ -1538,10 +1550,11 @@
     voice.chirp(null, 'happy');
     life.calmSince = Date.now() - SETTLE_MS + 8000;
     await loadPrefs();
-    if (brainOk) firstCheck();
+    if (brainOk) bestiesDone.then(firstCheck);
   }
 
   async function firstCheck() {
+    for (let t = 0; brain.busy && t < 120; t++) await sleep(1000); // wait our turn
     const r = await runSweep();
     if (!r || r.is_error) return;
     await sleep(3000); // let the items land
@@ -1814,7 +1827,7 @@
     row.className = 'sess' + (it.link ? '' : ' nolink');
     if (it.link) row.title = 'open it';
     if (it.rule) row.title = (row.title ? row.title + ' · ' : '') + 'rule: ' + it.rule;
-    row.onclick = () => openItem(it);
+    row.onclick = () => (it.link ? openItem(it) : talkAbout(it));
     const top = document.createElement('div');
     top.className = 'top';
     const dot = document.createElement('span');
@@ -1935,9 +1948,12 @@
   //     updates in place so a click is never lost to a rebuild. ---
   let bubKey = '';
   bubEl.addEventListener('click', () => {
+    plog('click bubble');
     if (!hatched) { clickEgg(); return; }
     const it = derived && derived.top;
-    if (it) openItem(it);
+    if (!it) return;
+    if (it.link) openItem(it);
+    else talkAbout(it);
   });
   function bubbleText(d, now) {
     const it = d.top;
@@ -2091,6 +2107,7 @@
     askInput.placeholder = 'Tell me what you need…';
     request(text);
   });
+  askEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') chatAbout = null; });
 
   // the old way, when the big brain can't run here: Claude app, text pasted
   async function openInClaude(prompt) {
@@ -2106,7 +2123,21 @@
   }
   const firstName = (to) => String(to).split(/[,<@]/)[0].trim().split(/\s+/)[0] || String(to);
 
+  // Open his chat about one item: he says what it is, and whatever you type
+  // next goes to the big brain with it (answering his question, fixing it).
+  let chatAbout = null;
+  function talkAbout(it) {
+    showAsk();
+    chatAbout = it;
+    addMsg('him', it.spoken || [it.who, it.title].filter(Boolean).join(': '));
+    askInput.placeholder = 'Tell me…';
+  }
+
   async function request(text, { about = '', plan = mode === 'ask' } = {}) {
+    if (!about && chatAbout) {
+      about = describe(chatAbout) + `\n(clawd item ${chatAbout.id}; resolve it once this is sorted)`;
+      chatAbout = null;
+    }
     addMsg('you', text);
     if (!brain || !brainOk) {
       await openInClaude(`Using the clawd skill: ${about ? about + '\n\n' : ''}${text}`);
@@ -2284,6 +2315,7 @@
 
   // a plain click on him: the popover, and a happy wiggle if he is free
   function clickBuddy() {
+    plog('click him (hatched=' + hatched + ', pop=' + !popEl.hidden + ')');
     if (!hatched) { clickEgg(); return; }
     const opening = popEl.hidden;
     setPopover(opening);

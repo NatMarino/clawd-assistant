@@ -33,8 +33,14 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// machine we can't see can be read back. Never the prompts or the replies.
 /// Kept small: over 256 KB it starts again.
 pub fn log(line: &str) {
+    log_to("brain.log", line);
+}
+
+/// The same, to any log file in %APPDATA%\ClawdAssistant (page.log is the
+/// webview's: its errors and the clicks that led up to them).
+pub fn log_to(file: &str, line: &str) {
     use std::io::Write;
-    let Some(path) = crate::app_data_dir().map(|d| d.join("brain.log")) else { return };
+    let Some(path) = crate::app_data_dir().map(|d| d.join(file)) else { return };
     if std::fs::metadata(&path).map(|m| m.len() > 256 * 1024).unwrap_or(false) {
         let _ = std::fs::remove_file(&path);
     }
