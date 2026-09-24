@@ -732,6 +732,9 @@ fn main() {
             };
             state::spawn_state_thread(rx, app.handle().clone(), base);
 
+            // on a Mac he lives in the menu bar, not the Dock icon row
+            #[cfg(target_os = "macos")]
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let win = app.get_webview_window("pet").expect("pet window missing");
             let state = app.state::<AppState>();
 
@@ -742,9 +745,6 @@ fn main() {
             // settings object once the webview exists. Best effort: any
             // failure just leaves the default behaviour.
             platform::quiet_browser_keys(&win);
-            // on a Mac he lives in the menu bar, not the Dock
-            #[cfg(target_os = "macos")]
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let saved = state.cfg.lock_or_recover().clone();
 
             // Restore scale, then position (clamped: only if the saved point

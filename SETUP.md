@@ -18,8 +18,9 @@ results. You don't need everything connected: only what serves what they want
 
 ## Step 2: The Clawd folder
 
-Claw'd is already installed. He's the egg on their taskbar, and he created
-`C:\Users\<them>\Clawd`. Ask them to share that folder with you (in Cowork, add it
+Claw'd is already installed. He's the egg on their taskbar (or their Dock, on a
+Mac), and he created a Clawd folder in their home folder: `C:\Users\<them>\Clawd`
+on Windows, `~/Clawd` (`/Users/<them>/Clawd`) on a Mac. Ask them to share that folder with you (in Cowork, add it
 as a folder you can work in). Continue once you can write to `Clawd\inbox`.
 
 ## Step 3: How they want to use him
@@ -64,7 +65,7 @@ rename it to `hello.json`):
 { "id": "heartbeat", "kind": "heartbeat", "interval_min": 30 }
 ```
 
-The egg cracks and starts wobbling. Tell them: "Look at your taskbar. He's ready.
+The egg cracks and starts wobbling. Tell them: "Look at your taskbar (or Dock). He's ready.
 Click the egg to hatch him!" From there he takes over, and asks their name and
 their work besties himself. Then run one sweep so he has something to tell them.
 
@@ -80,5 +81,6 @@ Briefly:
 - **The gear:** his voice, theme and skin, and **auto** (he does what they ask
   right away; anything to another person waits for their OK) or **ask me first**.
 - To change what he watches, tell him: "Claw'd, also tell me when…".
-- He lives on the taskbar by the clock. The tray icon (the crab) has **Quit** and
-  **Start over**.
+- He lives on the taskbar by the clock (on a Mac, on the Dock). The crab icon
+  (in the tray by the clock, or the menu bar at the top on a Mac) has **Quit**
+  and **Start over**.

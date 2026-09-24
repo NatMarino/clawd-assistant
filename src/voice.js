@@ -52,7 +52,8 @@ const MAX_CHARS = 300;
 // Preference order when nothing has been picked yet. Substring match on the
 // voice name, so it survives the "Microsoft X - English (United States)"
 // wrapping and works on a machine with a different set installed.
-const PREFERRED = ['Mark', 'Guy', 'David', 'Zira'];
+// The first four are Windows voices; the rest are the Mac's standard ones.
+const PREFERRED = ['Mark', 'Guy', 'David', 'Zira', 'Samantha', 'Alex', 'Daniel', 'Karen'];
 
 const DEFAULTS = {
   enabled: true,

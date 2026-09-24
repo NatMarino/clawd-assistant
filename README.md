@@ -36,10 +36,18 @@ When you ask him for something, or press **Do it** on one of Claude's suggestion
 he opens Claude with the request already written. Claude does the work, where you
 can see it.
 
-**Propose, don't act.** By default Claude only suggests ("here's a reply I'd
-send"). The gear has a **Do it** mode that adds a button to each suggestion. He
-wears a hard hat while it's on, and each press hands exactly one suggestion to
-Claude. Nothing is ever sent by a scheduled check.
+**Nothing goes to another person without your tap.** In **auto** (the default)
+he does what you ask right away, but an email, a Slack message or an invite
+shows you the draft first, with **Send**. The gear's **ask me first** mode makes
+him propose everything. Nothing is ever sent by a scheduled check.
+
+**Windows 11 and macOS 11+.** Download the latest from
+[Releases](https://github.com/NatMarino/clawd-assistant/releases): the
+`-setup.exe` for Windows, the `.dmg` for a Mac (Apple silicon or Intel). Neither
+is signed yet. On Windows, SmartScreen says "Windows protected your PC": click
+*More info*, then *Run anyway*. On a Mac, drag Claw'd to Applications, then the
+first time right-click him and choose **Open** (or System Settings → Privacy &
+Security → **Open Anyway**).
 
 ## Setting it up
 
@@ -59,18 +67,20 @@ in it is tied to the person who sent it.
   while the big brain works, and tells you when it's done. In **auto** (the
   default) he just does it; anything that goes to another person shows you the
   draft first, with **Send it**.
-- **He lives on your taskbar.** His home is just left of the clock. When nothing
+- **He lives on your taskbar** (on a Mac, on the Dock). His home is just left
+  of the clock (on a Mac, near the right end). When nothing
   needs you he tucks in behind the taskbar with his eyes peeking over, looks up
   now and then, and every few minutes takes a short stroll and wanders back.
   When something needs you he pops up and hops. Hover his head to bring him up.
-- **The tray icon** (the crab by the clock): click to call him out; right-click
-  for *Back to the taskbar* and *Quit*.
+- **The tray icon** (the crab by the clock, or in the menu bar on a Mac): click
+  to call him out; right-click for *Back to the taskbar*, *Start over* and *Quit*.
 - **Click** Claw'd for everything he's tracking: *Waiting on you*, *Coming up*,
   *Messages*, *Deliveries*. Click a row to open it, and ✓ to clear it.
-- **Hover, then +** to ask Claude for something.
+- **Hover, then +** for his requests chat.
 - **The treat** next to the + feeds him. He gets peckish.
-- **The gear** holds the mode (Propose or Do it), panel theme, skin (`app` or `cli`),
-  and voice (on or off, which voice, pitch, speed).
+- **The gear** holds the mode (auto or ask me first), panel theme, and
+  *customize how I look and sound* (words, animalese or no sound; voice, pitch,
+  size).
 - **Drag** to move. Drop him near the taskbar and he settles onto it; drop him
   anywhere else and he stays put (the tray menu sends him back). `+`, `-` and
   `0` resize him while he's selected. `q` quits.
@@ -79,8 +89,8 @@ in it is tied to the person who sent it.
 
 ## The folder
 
-`%USERPROFILE%\Clawd` (not Documents, which work laptops often sync to OneDrive)
-contains:
+`%USERPROFILE%\Clawd` on Windows, `~/Clawd` on a Mac (not Documents, which work
+laptops often sync to OneDrive) contains:
 
 | | |
 |---|---|
@@ -98,11 +108,13 @@ curl -X POST http://127.0.0.1:4318/items -H "Authorization: Bearer <token from h
 ```
 
 His own state (position, size, the current inbox) lives in
-`%APPDATA%\ClawdAssistant\`.
+`%APPDATA%\ClawdAssistant\` (on a Mac, `~/Library/Application Support/ClawdAssistant/`).
+If something goes wrong, `brain.log` and `page.log` there say what he tried.
 
 ## Building
 
-Windows 11, Rust stable, and the Tauri 2 prerequisites.
+Windows 11 or macOS, Rust stable, and the Tauri 2 prerequisites. CI builds and
+tests both on every push; releases are built there too.
 
 ```bash
 cd src-tauri
