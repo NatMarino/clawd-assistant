@@ -32,6 +32,10 @@ import { validateClips } from './sprite-kit.js';
 //   happy_wiggle  clicked / petted
 //   celebrate     the "waiting on you" list was just emptied
 //   peek          idle variety: peeks in from the edge
+//   walk          strolling along the taskbar (drawn facing right; the host
+//                 mirrors it for walking left)
+// A placeholder is the clip it names, or { from, motion } to borrow a clip
+// but move it differently.
 const PLACEHOLDERS = {
   reading: 'thinking',
   clock: 'needs_input',
@@ -39,12 +43,15 @@ const PLACEHOLDERS = {
   happy_wiggle: 'wave',
   celebrate: 'wave',
   peek: 'idle',
+  walk: { from: 'idle', motion: 'walk' },
 };
 
 function withPlaceholders(clips) {
   const out = { ...clips };
   for (const [name, stand] of Object.entries(PLACEHOLDERS)) {
-    if (!out[name] && out[stand]) out[name] = { ...out[stand], placeholderFor: stand };
+    const from = typeof stand === 'string' ? stand : stand.from;
+    const extra = typeof stand === 'string' ? {} : { motion: stand.motion };
+    if (!out[name] && out[from]) out[name] = { ...out[from], ...extra, placeholderFor: from };
   }
   return out;
 }

@@ -49,13 +49,21 @@ in it is tied to the person who sent it.
 
 ## Using it
 
+- **He lives on your taskbar.** His home is just left of the clock. When nothing
+  needs you he tucks in behind the taskbar with his eyes peeking over, looks up
+  now and then, and every few minutes takes a short stroll and wanders back.
+  When something needs you he pops up and hops. Hover his head to bring him up.
+- **The tray icon** (the crab by the clock): click to call him out; right-click
+  for *Back to the taskbar* and *Quit*.
 - **Click** Claw'd for everything he's tracking: *Waiting on you*, *Coming up*,
   *Messages*, *Deliveries*. Click a row to open it, and ✓ to clear it.
 - **Hover, then +** to ask Claude for something.
 - **The treat** next to the + feeds him. He gets peckish.
 - **The gear** holds the mode (Propose or Do it), panel theme, skin (`app` or `cli`),
   and voice (on or off, which voice, pitch, speed).
-- **Drag** to move. `+`, `-` and `0` resize him while he's selected. `q` quits.
+- **Drag** to move. Drop him near the taskbar and he settles onto it; drop him
+  anywhere else and he stays put (the tray menu sends him back). `+`, `-` and
+  `0` resize him while he's selected. `q` quits.
 - **Grey with a question mark** means he hasn't heard from Claude for longer than
   expected. He never pretends all is quiet when he just can't see.
 
@@ -100,20 +108,19 @@ open http://localhost:4870, and press **demo inbox** in the debug panel.
 
 ## Status and art
 
-**Drawn (CLI skin):** reading a letter (it arrives, then he reads it), a pocket
-watch for meetings, carrying a parcel for deliveries, a happy wiggle when
-clicked, and peeking up from the ground. They come from Nat's animation
-series and are converted by `tools/import-sheets.js`, which reads the pack's
-sprite sheets and writes `src/sprites-office.js`:
+**Drawn, on both skins:** reading a letter (it arrives, he opens it, then reads
+it out), a pocket watch for meetings, a parcel for deliveries, a happy wiggle
+when clicked, a celebration when the list is cleared, peeking up from behind
+the taskbar, and a walk cycle. They come from Nat's animation series, converted
+by `tools/import-sheets.js` (the CLI letter is shrunk by
+`tools/letter-small.js`) into `src/sprites-office.js`:
 
 ```bash
-node tools/import-sheets.js "<pack>/sprites/cli"
+node tools/import-sheets.js "<pack>/clawd-pet-sprites" "<pack>/clawd-walk-cycles"
 ```
 
-**Still placeholders:** `celebrate` and the hard hat on both skins, and every
-new clip on the `app` skin, which borrows an existing move until it has its
-own. The list is in `src/styles.js`, and the debug panel shows placeholders
-with dashed borders.
+The walk moves him at the pace its stride is drawn for, so his feet don't
+slide. **Still a placeholder:** the Do-it hard hat.
 
 ## Credits
 

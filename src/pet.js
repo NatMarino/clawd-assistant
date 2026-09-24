@@ -30,6 +30,8 @@ const MOTIONS = {
   tilt:    (t) => ({ dx: Math.round(Math.sin(t * 1.2) * 2), dy: 0 }),
   wobble:  (t) => ({ dx: Math.round(Math.sin(t * 2.2) * 2), dy: 0 }),
   work:    (t) => ({ dx: Math.round(Math.sin(t * 3)), dy: -Math.round(Math.abs(Math.sin(t * 8)) * 2) }),
+  // walking (the stand-in until the walk cycle is drawn): a quick springy bob
+  walk:    (t) => ({ dx: 0, dy: -Math.round(Math.abs(Math.sin(t * 7)) * 3) }),
   hopOnce: (t) => ({ dx: 0, dy: t < 0.55 ? -Math.round(Math.sin((t / 0.55) * Math.PI) * 8) : 0 }),
 };
 

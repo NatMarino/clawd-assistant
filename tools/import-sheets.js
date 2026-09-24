@@ -1,8 +1,9 @@
 // Turns Nat's animation pack into engine clips, for both skins:
 //
-//   node tools/import-sheets.js "<pack>/clawd-pet-sprites"
+//   node tools/import-sheets.js "<pack>/clawd-pet-sprites" ["<pack>/clawd-walk-cycles" ...]
 //
-// (the folder holding cli/ and app/, each with manifest.json and sheets/)
+// (each a folder holding cli/ and app/, each with manifest.json and sheets/;
+// several packs merge, so the walk cycles can come separately)
 // and writes src/sprites-office.js. Re-run it whenever the pack changes; the
 // output is generated, so edit the art (or tools/letter-small.js), not that.
 //
@@ -26,9 +27,9 @@ const fs = require('fs');
 const path = require('path');
 const { smallLetter } = require('./letter-small');
 
-const root = process.argv[2];
-if (!root) {
-  console.error('usage: node tools/import-sheets.js <pack>/clawd-pet-sprites');
+const roots = process.argv.slice(2);
+if (!roots.length) {
+  console.error('usage: node tools/import-sheets.js <pack>/clawd-pet-sprites [<pack>/clawd-walk-cycles ...]');
   process.exit(1);
 }
 
@@ -65,6 +66,10 @@ const CLIPS = {
   happy_wiggle: { loop: 'happy-wiggle' },
   celebrate: { loop: 'celebrate' },
   peek: { loop: 'peek', fromBottomEdge: true },
+  // walks in place facing right; the host moves him and mirrors it for left.
+  // The pack travels 1 art px per frame, so the clip carries that speed and
+  // his feet don't slide.
+  walk: { loop: 'walk', travelPxPerFrame: 1 },
 };
 
 function readFrames(file, count, skin) {
@@ -127,12 +132,28 @@ out.push('// series. Do not edit by hand: change the art and re-run it.');
 out.push("'use strict';");
 out.push('');
 const exported = [];
-for (const [skinName, skin] of Object.entries(SKINS)) {
-  const dir = path.join(root, skinName);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+for (const [skinName, base] of Object.entries(SKINS)) {
+  // every pack's animations for this skin, each remembering its own folder
+  const manifest = { fps: 10, animations: {} };
+  for (const root of roots) {
+    const dir = path.join(root, skinName);
+    if (!fs.existsSync(path.join(dir, 'manifest.json'))) continue;
+    const m = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+    for (const [k, a] of Object.entries(m.animations)) manifest.animations[k] = { fps: m.fps, ...a, dir };
+  }
   const names = [];
   for (const [name, spec] of Object.entries(CLIPS)) {
     const parts = ['intro', 'loop'].filter((k) => spec[k]);
+    // a clip drawn with half-pixels (the CLI walk) is read on a grid twice
+    // as fine, with cells half the size: same picture, same place
+    let skin = base;
+    const tryRead = (sk) => { for (const k of parts) { const a = manifest.animations[spec[k]]; if (a) readFrames(path.join(a.dir, a.sheet), a.frames, sk); } };
+    if (parts.every((k) => manifest.animations[spec[k]])) {
+      try { tryRead(skin); } catch (e) {
+        if (!/finer than/.test(e.message)) throw e;
+        skin = { ...base, scale: base.scale * 2, unitsPerCell: base.unitsPerCell / 2, res: base.res * 2 };
+      }
+    }
     if (!parts.every((k) => manifest.animations[spec[k]])) {
       console.warn(`${skinName}: no ${parts.map((k) => spec[k]).join(' + ')} in this pack; ${name} keeps its placeholder`);
       continue;
@@ -140,7 +161,7 @@ for (const [skinName, skin] of Object.entries(SKINS)) {
     const loaded = {};
     for (const k of parts) {
       const a = manifest.animations[spec[k]];
-      loaded[k] = { frames: readFrames(path.join(dir, a.sheet), a.frames, skin), ms: Math.round(1000 / (a.fps || manifest.fps)) };
+      loaded[k] = { frames: readFrames(path.join(a.dir, a.sheet), a.frames, skin), ms: Math.round(1000 / (a.fps || manifest.fps)) };
     }
     const bottom = spec.fromBottomEdge ? skin.frame * skin.scale - 1 : (skin.feetRow + 1) * skin.scale - 1;
     const box = crop(parts.flatMap((k) => loaded[k].frames), bottom);
@@ -161,13 +182,16 @@ for (const [skinName, skin] of Object.entries(SKINS)) {
     out.push(`const ${id}_F = ${JSON.stringify(table).replace(/\],\[/g, '],\n  [')};`);
     const stage = (k) => (steps[k] ? `${id}_STEPS(${JSON.stringify(steps[k])}, ${loaded[k].ms})` : '[]');
     out.push(`const ${id}_STEPS = (ix, ms) => ix.map((i) => ({ frame: ${id}_F[i], dx: ${dx}, dy: 0, ms }));`);
-    out.push(`const ${id} = { palette: '${skin.palette}', motion: 'none', overlay: null, res: ${skin.res}, stages: { intro: ${stage('intro')}, loop: ${stage('loop')}, outro: [] } };`);
+    // canvas units per second when the art says how far a frame travels
+    const loopMs = loaded[parts[parts.length - 1]].ms;
+    const travel = spec.travelPxPerFrame ? `, travel: ${spec.travelPxPerFrame * skin.scale * skin.unitsPerCell * (1000 / loopMs)}` : '';
+    out.push(`const ${id} = { palette: '${skin.palette}', motion: 'none', overlay: null, res: ${skin.res}${travel}, stages: { intro: ${stage('intro')}, loop: ${stage('loop')}, outro: [] } };`);
     out.push('');
     names.push(`${name}: ${id}`);
   }
-  out.push(`const ${skin.name} = { ${names.join(', ')} };`);
+  out.push(`const ${base.name} = { ${names.join(', ')} };`);
   out.push('');
-  exported.push(skin.name);
+  exported.push(base.name);
   console.log(`${skinName}: ${names.map((n) => n.split(':')[0]).join(', ')}`);
 }
 out.push(`export { ${exported.join(', ')} };`);

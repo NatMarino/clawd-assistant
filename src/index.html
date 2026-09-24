@@ -18,6 +18,10 @@
     width: 160px; height: 160px;
   }
   #pet-canvas { image-rendering: pixelated; display: block; }
+  /* on the taskbar: popping up is springy, tucking back in is not */
+  body.on-taskbar #pet-canvas { transition: transform .45s cubic-bezier(.34, 1.56, .64, 1); }
+  body.on-taskbar #pet-canvas.tucking { transition: transform .7s ease-in; }
+  #pet-canvas.snap { transition: none !important; }
   /* the treat shares the buddy's unit space: same box, same scale, laid
      straight over the pet canvas. Decorative only — never clickable. */
   #treat-canvas {
@@ -374,6 +378,24 @@
   const askInput = document.getElementById('ask-input');
   const toastEl = document.getElementById('toast');
 
+  // --- life on the taskbar (see "Life on the taskbar" below). Declared up
+  //     here because the hit-region code reads it. ---
+  const FEET_UNIT = 140;   // every clip stands on canvas unit 140, both skins
+  const TUCK_UNITS = 38;   // tucked in: sunk this far, his eyes just over the edge
+  const life = {
+    tb: null,              // taskbar_info from Rust, or null (no taskbar)
+    tucked: false, walking: false, busy: false, dragging: false, hovering: false,
+    facing: 1,             // 1 right, -1 left (the walk is drawn facing right)
+    calmSince: Date.now(), nextPeek: 0, nextStroll: 0,
+    releaseWalk: null, onArrive: null,
+  };
+  // true while the launch wave plays: nothing else takes the stage until
+  // it hands over (checked as a flag, not as pet.state, because the wave
+  // is still 'wave' all through its outro)
+  let greeting = true;
+  const onTaskbar = () => !!(life.tb && life.tb.on);
+  const sinkPx = () => (life.tucked ? TUCK_UNITS * pet.scale : 0);
+
   function reportBounds() {
     if (!IS_TAURI) return;
     // page-relative: the union of the buddy and every visible panel, so
@@ -381,8 +403,10 @@
     // click-through
     const b = pet.opaqueBounds();
     const r = wrap.getBoundingClientRect();
-    let x = b.x + r.left, y = b.y + r.top;
+    let x = b.x + r.left, y = b.y + r.top + sinkPx();
     let right = x + b.w, bottom = y + b.h;
+    // on the taskbar nothing below the line is him: that is the taskbar
+    if (onTaskbar()) { bottom = Math.min(bottom, r.bottom); y = Math.min(y, bottom); }
     for (const el of [popEl, btnsEl, bubEl, askEl]) {
       if (el.hidden) continue;
       const pr = el.getBoundingClientRect();
@@ -409,11 +433,17 @@
     if (!btnsEl.hidden || !popEl.hidden || !bubEl.hidden || !askEl.hidden || feeding) return;
     const r = wrap.getBoundingClientRect();
     const rb = pet.restBounds();
-    const feetCss = r.top + (rb.y + rb.h) * pet.scale;
-    btnsEl.style.top = (feetCss + 6) + 'px';
     treatBtn.classList.toggle('peckish', isPeckish());
     btnsEl.hidden = false;
-    placeCenteredOnBuddy(btnsEl);
+    if (onTaskbar()) {
+      // below him is the taskbar, so the pair sits at his right side
+      btnsEl.style.top = (r.bottom - 26) + 'px';
+      btnsEl.style.left = (r.left + (rb.x + rb.w) * pet.scale + 8) + 'px';
+    } else {
+      const feetCss = r.top + (rb.y + rb.h) * pet.scale;
+      btnsEl.style.top = (feetCss + 6) + 'px';
+      placeCenteredOnBuddy(btnsEl);
+    }
     reportBounds();
   }
 
@@ -733,7 +763,7 @@
   let flourishing = false;
   function applyDerived() {
     const d = derived;
-    if (!d || flourishing || feeding || pet.state === 'wave') return;
+    if (!d || flourishing || feeding || greeting) return;
     if (d.state === 'idle' && pet.state === 'sleeping') return;
     try { setState(d.state, d.detail || null); } catch (err) { console.error('bad derived state', d, err); }
   }
@@ -765,7 +795,7 @@
   // safety cap passes). Returns null when he isn't free for it.
   const HOLD_CAP_MS = 30000;
   function hold(state, force = false) {
-    if (!pet.style.clips[state] || feeding || pet.state === 'wave') return null;
+    if (!pet.style.clips[state] || feeding || greeting) return null;
     if (!force && derived && derived.state !== 'idle') return null;
     const tok = ++flourishToken;
     flourishing = true;
@@ -806,6 +836,200 @@
     }
     updateBubble(changed);
     if (voiceArmed) speakTick(now);
+    lifeTick(now);
+  }
+
+  // ======================================================================
+  // Life on the taskbar. When he lives there (the default), his feet stand
+  // on the taskbar's top edge and everything below that line is hidden, so
+  // he can sink in behind it. Rust knows where the taskbar is and moves the
+  // window; this decides what he does:
+  //   - something needs you: he's up, out and hopping (as everywhere else)
+  //   - all quiet: he walks home (just left of the clock), and after a while
+  //     tucks in with only the top of his head showing, and naps
+  //   - now and then he peeks up, looks around, and ducks back down
+  //   - every few minutes he takes a short stroll and wanders back
+  //   - hovering his head pops him up; the tray icon calls him out
+  // ======================================================================
+  const SETTLE_MS = 20000;          // quiet this long at home before tucking in
+  const HOVER_RETUCK_MS = 6000;     // ...but only this long after you hovered
+  const HOME_AFTER_MS = 6000;       // quiet this long away from home: walk back
+  const PEEK_EVERY = [70000, 180000];
+  const STROLL_EVERY = [4 * 60000, 9 * 60000];
+  const STROLL_DIST = [150, 520];   // CSS px, scaled to the screen
+  // walking pace: the walk clip says how far its stride carries him (canvas
+  // units a second), so his feet never slide; this is only the fallback
+  const WALK_UNITS_PER_S = 60;
+  const between = ([a, b]) => a + Math.random() * (b - a);
+
+  // canvas transform: sunk while tucked, mirrored while walking left
+  function applyCanvasTransform() {
+    const parts = [];
+    if (life.tucked) parts.push(`translateY(${TUCK_UNITS * pet.scale}px)`);
+    if (life.facing < 0) parts.push('scaleX(-1)');
+    canvas.style.transform = parts.join(' ');
+  }
+
+  // On the taskbar the wrap ends at his feet, and overflow is hidden: that
+  // edge IS the taskbar's top, so anything lower is behind it.
+  function layoutWrap() {
+    const on = onTaskbar();
+    document.body.classList.toggle('on-taskbar', on);
+    wrap.style.height = ((on ? FEET_UNIT : 160) * pet.scale) + 'px';
+    wrap.style.bottom = on ? (110 + (160 - FEET_UNIT) * pet.scale) + 'px' : '';
+    wrap.style.overflow = on ? 'hidden' : '';
+    if (!on) { life.tucked = false; life.facing = 1; }
+    applyCanvasTransform();
+    reportBounds();
+    reportAnchor();
+  }
+
+  // Tell Rust exactly where his centre and feet are in the window, so
+  // standing him on the taskbar lands to the pixel whatever the web view's
+  // own offsets are. Physical px from the viewport's top-left.
+  function reportAnchor() {
+    if (!IS_TAURI) return;
+    const r = wrap.getBoundingClientRect();
+    const rb = pet.restBounds();
+    const dpr = window.devicePixelRatio || 1;
+    invoke('report_anchor', {
+      x: (r.left + (rb.x + rb.w / 2) * pet.scale) * dpr,
+      y: (r.top + FEET_UNIT * pet.scale) * dpr,
+      scale: pet.scale,
+    });
+  }
+
+  // `instant`: no slide, for when a clip does its own rising (the peek) or
+  // a drag grabs him
+  function setTuck(on, instant = false) {
+    on = on && onTaskbar();
+    if (on === life.tucked) return;
+    canvas.classList.toggle('snap', instant);
+    canvas.classList.toggle('tucking', on && !instant);
+    life.tucked = on;
+    applyCanvasTransform();
+    reportBounds();
+    if (instant) requestAnimationFrame(() => requestAnimationFrame(() => canvas.classList.remove('snap')));
+  }
+
+  async function refreshTaskbar() {
+    if (!IS_TAURI) return;
+    try { life.tb = await invoke('taskbar_info'); } catch { life.tb = null; }
+    layoutWrap();
+  }
+
+  function lifeTick(now) {
+    if (!IS_TAURI || !onTaskbar() || life.dragging) return;
+    const tb = life.tb;
+    const calm = !!derived && derived.state === 'idle' && popEl.hidden && askEl.hidden
+      && !feeding && !life.hovering;
+    if (!calm) {
+      life.calmSince = now;
+      if (life.walking) stopWalking();
+      life.busy = false;
+      setTuck(false);
+      return;
+    }
+    if (life.walking || life.busy || flourishing) return;
+    if (!life.nextStroll) life.nextStroll = now + between(STROLL_EVERY);
+    const away = Math.abs(tb.center_x - tb.home_x) > 8 * tb.sf;
+    if (away) {
+      if (now - life.calmSince > HOME_AFTER_MS) {
+        setTuck(false);
+        walkTo(tb.home_x, () => { life.calmSince = Date.now() - SETTLE_MS + 4000; });
+      }
+      return;
+    }
+    if (!life.tucked) {
+      if (now - life.calmSince > SETTLE_MS) {
+        setTuck(true);
+        life.nextPeek = now + between(PEEK_EVERY);
+      }
+      return;
+    }
+    if (now > life.nextStroll) { life.nextStroll = now + between(STROLL_EVERY); stroll(); return; }
+    if (now > life.nextPeek) { life.nextPeek = now + between(PEEK_EVERY); peekOnce(); }
+  }
+
+  // Walk his centre to `x` (physical px). The walk clip plays facing the way
+  // he goes; Rust slides the window and says "walk-done" on arrival.
+  async function walkTo(x, onArrive) {
+    const tb = life.tb;
+    if (!tb || life.walking) return false;
+    life.facing = x < tb.center_x ? -1 : 1;
+    const release = hold('walk');
+    if (!release) { life.facing = 1; applyCanvasTransform(); return false; }
+    applyCanvasTransform();
+    life.walking = true;
+    life.releaseWalk = release;
+    life.onArrive = onArrive || null;
+    const clip = pet.style.clips.walk;
+    const speed = ((clip && clip.travel) || WALK_UNITS_PER_S) * pet.scale * tb.sf; // physical px/s
+    try { await invoke('walk_to', { centerX: x, speed }); } catch { finishWalk(false); }
+    return true;
+  }
+
+  function finishWalk(arrived) {
+    if (!life.walking) return;
+    life.walking = false;
+    life.facing = 1;
+    applyCanvasTransform();
+    const release = life.releaseWalk;
+    const then = life.onArrive;
+    life.releaseWalk = null;
+    life.onArrive = null;
+    if (release) release();
+    refreshTaskbar().then(() => { if (arrived && then) then(); });
+  }
+
+  function stopWalking() {
+    invoke('stop_walk');
+    finishWalk(false);
+  }
+
+  // up, a little way along the bar, a look around, and back home
+  function stroll() {
+    const tb = life.tb;
+    if (!tb) return;
+    life.busy = true;
+    setTuck(false);
+    const dist = between(STROLL_DIST) * tb.sf * (Math.random() < 0.8 ? -1 : 1); // mostly away from the clock
+    const target = Math.max(tb.min_x, Math.min(tb.max_x, tb.home_x + dist));
+    setTimeout(() => {
+      if (!life.busy) return; // something needed him meanwhile
+      walkTo(target, () => {
+        // look around a moment (sometimes with a happy wiggle), then home
+        if (Math.random() < 0.5) flourish('happy_wiggle', null);
+        setTimeout(() => {
+          if (!life.busy) return;
+          walkTo(life.tb ? life.tb.home_x : target, () => {
+            life.busy = false;
+            life.calmSince = Date.now() - SETTLE_MS + 3000;
+          });
+        }, between([2500, 5000]));
+      });
+    }, 600);
+  }
+
+  // rise up from behind the bar (the peek clip does its own rising), look
+  // about, and sink back
+  function peekOnce() {
+    if (!pet.style.clips.peek || pet.style.clips.peek.placeholderFor) return;
+    life.busy = true;
+    setTuck(false, true);
+    if (!flourish('peek', null)) { setTuck(true, true); life.busy = false; return; }
+    setTimeout(() => {
+      if (life.busy && derived && derived.state === 'idle') setTuck(true, true);
+      life.busy = false;
+    }, Math.min(9000, Math.max(1000, clipMs('peek'))));
+  }
+
+  // the tray icon (or its "Call Claw'd"): up, out, and a happy hello
+  function summon() {
+    life.calmSince = Date.now();
+    setTuck(false);
+    if (!flourish('happy_wiggle', null, true)) setState('idle');
+    voice.chirp(null, 'light');
   }
 
   // --- what he says, and when ---
@@ -842,6 +1066,12 @@
     const first = cands[0];
     const news = first.how === 'new' ? cands.filter((c) => c.how === 'new') : [first];
     const text = voice.lineForItem(first.it, first.how, { minutes: first.minutes, count: news.length });
+    // on the taskbar he comes up (and stops strolling) to tell you
+    if (onTaskbar() && voice.canAnnounce()) {
+      if (life.walking) stopWalking();
+      setTuck(false);
+      life.calmSince = Date.now();
+    }
     speakBusy = true;
     let r;
     try {
@@ -1219,6 +1449,7 @@
   pet.on('scale', (s) => {
     wrap.style.width = (160 * s) + 'px';
     wrap.style.height = (160 * s) + 'px';
+    layoutWrap();
     document.getElementById('size-readout').textContent = s.toFixed(2) + '×';
     try { localStorage.setItem('petScale', String(s)); } catch {}
   });
@@ -1335,7 +1566,11 @@
   if (IS_TAURI) {
     let down = null, dragging = false;
     const clear = () => { down = null; dragging = false; };
-    const endDrag = () => { if (dragging) invoke('end_drag'); clear(); };
+    const endDrag = () => {
+      if (dragging) invoke('end_drag').then(refreshTaskbar);
+      life.dragging = false;
+      clear();
+    };
     document.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || !onBuddy(e)) return;
       down = { x: e.screenX, y: e.screenY };
@@ -1347,6 +1582,9 @@
       if (!(e.buttons & 1)) { clear(); return; }
       if (Math.hypot(e.screenX - down.x, e.screenY - down.y) > 2) {
         dragging = true;
+        life.dragging = true;
+        if (life.walking) stopWalking();
+        setTuck(false, true);
         const dpr = window.devicePixelRatio || 1;
         invoke('start_drag', { x: down.x * dpr, y: down.y * dpr });
       }
@@ -1448,6 +1686,7 @@
   //     something (placeholders until drawn). Rare on purpose: each one
   //     restarts the nap clock. ---
   setInterval(() => {
+    if (onTaskbar()) return; // on the taskbar, lifeTick does the peeking
     if (pet.state !== 'idle' || !derived || derived.state !== 'idle' || Math.random() > 0.4) return;
     flourish(Math.random() < 0.5 ? 'peek' : 'happy_wiggle', null);
   }, 4 * 60 * 1000);
@@ -1456,10 +1695,12 @@
   setState('wave');
   setTimeout(() => {
     voiceArmed = true;
-    if (pet.state !== 'wave') return;
-    setState('idle');
+    greeting = false;
+    // Whatever arrived during the wave is applied now, always: an ask that
+    // came in mid-greeting must not wait for the next change to show.
     derived = null; // force the next tick to apply
     tick();
+    if (pet.state === 'wave' && derived && derived.state === 'idle') setState('idle');
   }, 1875);
 
   setInterval(tick, 1000);
@@ -1467,7 +1708,7 @@
   // Tauri host wiring
   if (IS_TAURI) {
     document.body.classList.add('tauri');
-    window.addEventListener('resize', reportBounds);
+    window.addEventListener('resize', () => { reportBounds(); reportAnchor(); });
     // Rust owns the scale (it restores it from config)
     invoke('get_pet_scale').then((s) => {
       pet.setScale(s);
@@ -1477,9 +1718,24 @@
     const { listen } = window.__TAURI__.event;
     // Rust's cursor poller is the hover ground truth
     listen('pet-hover', (e) => {
-      if (e.payload) showNewBtn();
-      else scheduleHideNewBtn();
+      life.hovering = !!e.payload;
+      if (e.payload) {
+        // hovering the top of his head pops him up to say hi
+        if (life.tucked) { setTuck(false); voice.chirp(null, 'light'); }
+        showNewBtn();
+      } else {
+        scheduleHideNewBtn();
+        // he ducks back down soon after you move away
+        life.calmSince = Math.min(life.calmSince, Date.now() - SETTLE_MS + HOVER_RETUCK_MS);
+      }
     });
+    listen('walk-done', () => finishWalk(true));
+    listen('tray', (e) => {
+      if (e.payload === 'home') invoke('go_to_taskbar', { centerX: null }).then(refreshTaskbar);
+      else summon();
+    });
+    refreshTaskbar();
+    setInterval(refreshTaskbar, 30000); // the taskbar can move, resize or auto-hide
     // listener FIRST, then the snapshot, so a stale snapshot can never
     // overwrite a raced-in live event
     let gotLive = false;
@@ -1494,7 +1750,7 @@
   // debug/test handle
   window.__clawd = {
     pet, setState, setStyle: setArtStyle, setPopover, renderPopover, feed, treatLayer, voice, setMode,
-    showAsk, tick, derive, demoInbox,
+    showAsk, tick, derive, demoInbox, life, setTuck, walkTo, stroll, peekOnce, refreshTaskbar,
     get inbox() { return inbox; }, set inbox(p) { inbox = p; tick(); renderPopover(); },
     get derived() { return derived; }, get treats() { return treats; }, get announced() { return announced; },
   };

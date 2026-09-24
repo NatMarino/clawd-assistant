@@ -7,6 +7,7 @@
 
 mod feed;
 mod state;
+mod taskbar;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -80,11 +81,21 @@ struct PetConfig {
     /// where Claude's items come from (absent = defaults)
     #[serde(default)]
     feed: feed::FeedConfig,
+    /// living on the taskbar (feet on its top edge) rather than wherever he
+    /// was dropped. On by default; dropping him away from the taskbar turns
+    /// it off, dropping him near it (or the tray's "Back to the taskbar")
+    /// turns it back on.
+    #[serde(default = "yes")]
+    on_taskbar: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for PetConfig {
     fn default() -> Self {
-        Self { x: None, y: None, scale: 1.75, feed: Default::default() }
+        Self { x: None, y: None, scale: 1.75, feed: Default::default(), on_taskbar: true }
     }
 }
 
@@ -99,9 +110,11 @@ fn config_path() -> Option<PathBuf> {
 }
 
 fn load_config() -> PetConfig {
+    // a byte-order mark (Notepad, PowerShell 5) must not cost the whole
+    // config: an unreadable file silently falls back to every default
     config_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str(&s).ok())
+        .and_then(|s| serde_json::from_str(s.trim_start_matches('\u{feff}')).ok())
         .unwrap_or_default()
 }
 
@@ -125,11 +138,155 @@ struct DragGrab {
     dy: f64,
 }
 
+/// A walk in progress: the window's x slides from `from` to `to` (physical
+/// px) over `ms`, driven by the poller thread so it stays smooth whatever the
+/// webview is doing.
+#[derive(Clone, Copy)]
+struct Walk {
+    from: f64,
+    to: f64,
+    start: std::time::Instant,
+    ms: f64,
+}
+
 struct AppState {
     bounds: Mutex<OpaqueBounds>,
     cfg: Mutex<PetConfig>,
     dirty: AtomicBool,
     drag: Mutex<Option<DragGrab>>,
+    walk: Mutex<Option<Walk>>,
+    /// where his centre and feet really are, measured by the page:
+    /// (pet scale, x, y) as physical offsets from the window's top-left
+    anchor: Mutex<Option<(f64, f64, f64)>>,
+}
+
+// --- living on the taskbar ---------------------------------------------
+//
+// Every sprite stands with its feet on canvas unit 140 (both skins), the
+// canvas is 160 units tall, and its bottom sits BUBBLE_ROOM above the window
+// bottom. So the feet are a fixed distance from the window's top edge, and
+// putting him on the taskbar is one set_position.
+const FEET_UNIT: f64 = 140.0;
+// a drop this close to the taskbar line (logical px) counts as "on it"
+const SNAP_PX: f64 = 90.0;
+
+fn feet_from_top(pet_scale: f64, sf: f64) -> f64 {
+    (window_size(pet_scale).height - BUBBLE_ROOM - (BASE_SIZE - FEET_UNIT) * pet_scale) * sf
+}
+
+fn half_width(pet_scale: f64, sf: f64) -> f64 {
+    window_size(pet_scale).width * sf / 2.0
+}
+
+/// His centre x and feet y, as offsets from the window's top-left
+/// (physical px). The page measures them (report_anchor) because the web
+/// view does not sit exactly where the window arithmetic says it should;
+/// until it has, the arithmetic stands in.
+fn anchor(state: &AppState, pet_scale: f64, sf: f64) -> (f64, f64) {
+    match *state.anchor.lock_or_recover() {
+        Some((s, x, y)) if (s - pet_scale).abs() < 1e-6 => (x, y),
+        _ => (half_width(pet_scale, sf), feet_from_top(pet_scale, sf)),
+    }
+}
+
+/// Where along the taskbar his centre may go: clear of both ends, and never
+/// over the tray icons and clock.
+fn taskbar_range(tb: &taskbar::Taskbar, pet_scale: f64, sf: f64) -> (f64, f64, f64) {
+    let body = 64.0 * pet_scale * sf; // half his body plus the arm nubs
+    let min = tb.left as f64 + body;
+    let max = (tb.tray_left as f64 - body).max(min);
+    let home = (tb.tray_left as f64 - body - 12.0 * sf).clamp(min, max);
+    (min, max, home)
+}
+
+/// Stand him on the taskbar with his centre at `center_x` (clamped to the
+/// walkable range), or at home when None.
+fn place_on_taskbar(win: &tauri::WebviewWindow, state: &AppState, center_x: Option<f64>) -> bool {
+    let Some(tb) = taskbar::query() else { return false };
+    let sf = win.scale_factor().unwrap_or(1.0);
+    let s = state.cfg.lock_or_recover().scale.clamp(0.5, 3.0);
+    let (min, max, home) = taskbar_range(&tb, s, sf);
+    let cx = center_x.unwrap_or(home).clamp(min, max);
+    let (ax, ay) = anchor(state, s, sf);
+    let x = (cx - ax).round() as i32;
+    let y = (tb.top as f64 - ay).round() as i32;
+    let _ = win.set_position(PhysicalPosition::new(x, y));
+    let mut cfg = state.cfg.lock_or_recover();
+    cfg.on_taskbar = true;
+    state.dirty.store(true, Ordering::Relaxed);
+    true
+}
+
+#[derive(Serialize)]
+struct TaskbarInfo {
+    /// he is living on the taskbar right now
+    on: bool,
+    /// his centre and the walkable range, physical px
+    center_x: f64,
+    min_x: f64,
+    max_x: f64,
+    home_x: f64,
+    /// physical px per CSS px, for turning distances into walking time
+    sf: f64,
+}
+
+#[tauri::command]
+fn taskbar_info(window: tauri::WebviewWindow, state: tauri::State<AppState>) -> Option<TaskbarInfo> {
+    let tb = taskbar::query()?;
+    let sf = window.scale_factor().unwrap_or(1.0);
+    let (s, on) = {
+        let cfg = state.cfg.lock_or_recover();
+        (cfg.scale.clamp(0.5, 3.0), cfg.on_taskbar)
+    };
+    let pos = window.outer_position().ok()?;
+    let (min_x, max_x, home_x) = taskbar_range(&tb, s, sf);
+    Some(TaskbarInfo { on, center_x: pos.x as f64 + anchor(&state, s, sf).0, min_x, max_x, home_x, sf })
+}
+
+/// Put him (back) on the taskbar: at `center_x`, or at home.
+#[tauri::command]
+fn go_to_taskbar(window: tauri::WebviewWindow, state: tauri::State<AppState>, center_x: Option<f64>) -> bool {
+    *state.walk.lock_or_recover() = None;
+    place_on_taskbar(&window, &state, center_x)
+}
+
+/// Start walking to `center_x` at `speed` physical px per second. Returns
+/// how long it will take (ms); the poller emits "walk-done" on arrival.
+#[tauri::command]
+fn walk_to(window: tauri::WebviewWindow, state: tauri::State<AppState>, center_x: f64, speed: f64) -> f64 {
+    let Some(tb) = taskbar::query() else { return 0.0 };
+    let Ok(pos) = window.outer_position() else { return 0.0 };
+    let sf = window.scale_factor().unwrap_or(1.0);
+    let s = state.cfg.lock_or_recover().scale.clamp(0.5, 3.0);
+    let (min, max, _) = taskbar_range(&tb, s, sf);
+    let to = center_x.clamp(min, max) - anchor(&state, s, sf).0;
+    let from = pos.x as f64;
+    let ms = ((to - from).abs() / speed.max(10.0) * 1000.0).max(1.0);
+    *state.walk.lock_or_recover() = Some(Walk { from, to, start: std::time::Instant::now(), ms });
+    ms
+}
+
+/// The page's measurement of his centre and feet, in physical px from the
+/// web view's top-left, at pet scale `scale`. Stored as offsets from the
+/// window's top-left; on the taskbar he is re-stood straight away, around
+/// the same centre, so the correction is invisible.
+#[tauri::command]
+fn report_anchor(window: tauri::WebviewWindow, state: tauri::State<AppState>, x: f64, y: f64, scale: f64) {
+    let (Ok(outer), Ok(inner)) = (window.outer_position(), window.inner_position()) else { return };
+    let sf = window.scale_factor().unwrap_or(1.0);
+    let before = anchor(&state, scale, sf).0;
+    let ax = (inner.x - outer.x) as f64 + x;
+    let ay = (inner.y - outer.y) as f64 + y;
+    *state.anchor.lock_or_recover() = Some((scale, ax, ay));
+    let idle = state.walk.lock_or_recover().is_none() && state.drag.lock_or_recover().is_none();
+    if idle && state.cfg.lock_or_recover().on_taskbar {
+        let _ = place_on_taskbar(&window, &state, Some(outer.x as f64 + before));
+    }
+}
+
+#[tauri::command]
+fn stop_walk(state: tauri::State<AppState>) {
+    *state.walk.lock_or_recover() = None;
 }
 
 fn left_button_down() -> bool {
@@ -237,9 +394,30 @@ fn start_drag(window: tauri::WebviewWindow, state: tauri::State<AppState>, x: f6
     });
 }
 
+/// The drag is over. Dropped with his feet near the taskbar line he settles
+/// onto it and lives there; dropped anywhere else he stays put. Returns
+/// whether he is on the taskbar now.
 #[tauri::command]
-fn end_drag(state: tauri::State<AppState>) {
+fn end_drag(window: tauri::WebviewWindow, state: tauri::State<AppState>) -> bool {
     *state.drag.lock_or_recover() = None;
+    let (Some(tb), Ok(pos)) = (taskbar::query(), window.outer_position()) else {
+        state.cfg.lock_or_recover().on_taskbar = false;
+        return false;
+    };
+    let sf = window.scale_factor().unwrap_or(1.0);
+    let s = state.cfg.lock_or_recover().scale.clamp(0.5, 3.0);
+    let (ax, ay) = anchor(&state, s, sf);
+    let feet = pos.y as f64 + ay;
+    let cx = pos.x as f64 + ax;
+    let near = (feet - tb.top as f64).abs() <= SNAP_PX * sf
+        && cx >= tb.left as f64
+        && cx <= tb.right as f64;
+    if near {
+        return place_on_taskbar(&window, &state, Some(cx));
+    }
+    state.cfg.lock_or_recover().on_taskbar = false;
+    state.dirty.store(true, Ordering::Relaxed);
+    false
 }
 
 #[tauri::command]
@@ -254,6 +432,11 @@ fn set_pet_scale(window: tauri::WebviewWindow, state: tauri::State<AppState>, sc
         .hwnd()
         .map(|h| h == unsafe { GetForegroundWindow() })
         .unwrap_or(false);
+    // his centre before the resize: set_size keeps the top-left corner, so
+    // on the taskbar he is re-stood around this point afterwards
+    let sf = window.scale_factor().unwrap_or(1.0);
+    let old_s = state.cfg.lock_or_recover().scale.clamp(0.5, 3.0);
+    let center = window.outer_position().map(|p| p.x as f64 + anchor(&state, old_s, sf).0).ok();
     let _ = window.set_size(window_size(s));
     // resizing can drop WebView2's keyboard focus; re-focus the WEBVIEW
     // (ICoreWebView2Controller::MoveFocus) so consecutive +/- presses keep
@@ -262,8 +445,15 @@ fn set_pet_scale(window: tauri::WebviewWindow, state: tauri::State<AppState>, sc
     if foreground {
         let _ = AsRef::<tauri::Webview>::as_ref(&window).set_focus();
     }
-    state.cfg.lock_or_recover().scale = s;
+    let on_taskbar = {
+        let mut cfg = state.cfg.lock_or_recover();
+        cfg.scale = s;
+        cfg.on_taskbar
+    };
     state.dirty.store(true, Ordering::Relaxed);
+    if on_taskbar {
+        let _ = place_on_taskbar(&window, &state, center);
+    }
 }
 
 #[tauri::command]
@@ -382,10 +572,12 @@ fn main() {
             cfg: Mutex::new(cfg),
             dirty: AtomicBool::new(false),
             drag: Mutex::new(None),
+            walk: Mutex::new(None),
+            anchor: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             set_opaque_bounds, start_drag, end_drag, set_pet_scale, get_pet_scale, quit_app,
-            open_link, ask_claude,
+            open_link, ask_claude, taskbar_info, go_to_taskbar, walk_to, stop_walk, report_anchor,
             state::get_pet_state, state::dismiss_item, state::hand_off_item
         ])
         .setup(move |app| {
@@ -463,7 +655,47 @@ fn main() {
                     let _ = win.set_position(PhysicalPosition::new(x, y));
                 }
             }
+            // living on the taskbar: back where he was along it, feet on
+            // its edge (the bar may have moved, or the screen changed)
+            if saved.on_taskbar {
+                let cx = saved.x.map(|x| x as f64 + anchor(&state, s, sf).0);
+                if !place_on_taskbar(&win, &state, cx) {
+                    state.cfg.lock_or_recover().on_taskbar = false;
+                }
+            }
             let _ = win.show();
+
+            // the tray icon: the way to call him out, send him home, or quit
+            // without hunting for him and pressing q
+            {
+                use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+                use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+                use tauri::Emitter;
+                let show = MenuItem::with_id(app, "summon", "Call Claw’d", true, None::<&str>)?;
+                let home = MenuItem::with_id(app, "home", "Back to the taskbar", true, None::<&str>)?;
+                let sep = PredefinedMenuItem::separator(app)?;
+                let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show, &home, &sep, &quit])?;
+                let mut tray = TrayIconBuilder::with_id("clawd")
+                    .tooltip("Claw’d")
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(|app, ev| match ev.id.as_ref() {
+                        "quit" => app.exit(0),
+                        other => {
+                            let _ = app.emit_to("pet", "tray", other.to_string());
+                        }
+                    })
+                    .on_tray_icon_event(|tray, ev| {
+                        if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
+                            let _ = tray.app_handle().emit_to("pet", "tray", "summon".to_string());
+                        }
+                    });
+                if let Some(icon) = app.default_window_icon() {
+                    tray = tray.icon(icon.clone());
+                }
+                tray.build(app)?;
+            }
 
             // Persist position/scale, debounced: events mark dirty, a saver
             // thread writes at most once a second.
@@ -506,6 +738,27 @@ fn main() {
                         let pos = poller_win.outer_position().ok()?; // physical
                         Some((cursor, pos))
                     })();
+
+                    // a walk along the taskbar: slide x, keep y; a drag
+                    // always wins over a walk
+                    let walk = *state.walk.lock_or_recover();
+                    if let (Some(w), None) = (walk, *state.drag.lock_or_recover()) {
+                        let t = (w.start.elapsed().as_secs_f64() * 1000.0 / w.ms).min(1.0);
+                        let x = (w.from + (w.to - w.from) * t).round() as i32;
+                        if let Ok(pos) = poller_win.outer_position() {
+                            if pos.x != x {
+                                let _ = poller_win.set_position(PhysicalPosition::new(x, pos.y));
+                            }
+                        }
+                        if t >= 1.0 {
+                            *state.walk.lock_or_recover() = None;
+                            use tauri::Emitter;
+                            let _ = handle.emit_to("pet", "walk-done", x);
+                        }
+                    } else if walk.is_some() {
+                        *state.walk.lock_or_recover() = None; // grabbed mid-walk
+                    }
+                    let walking = walk.is_some();
 
                     let grab = *state.drag.lock_or_recover();
                     if let Some(g) = grab {
@@ -561,7 +814,7 @@ fn main() {
                         use tauri::Emitter;
                         let _ = handle.emit_to("pet", "pet-hover", inside);
                     }
-                    std::thread::sleep(Duration::from_millis(if far { SLOW_TICK } else { FAST_TICK }));
+                    std::thread::sleep(Duration::from_millis(if far && !walking { SLOW_TICK } else { FAST_TICK }));
                 }
             });
             Ok(())
