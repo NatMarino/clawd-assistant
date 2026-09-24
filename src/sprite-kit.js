@@ -20,12 +20,15 @@ const PALETTES = {
   // body and eyes, plus the props' own colours as drawn
   office: {
     '#': '#d47f5a', 'E': '#000000',
+    '%': '#a96d4f',                                                   // arm shadow, as in the typing clip
     'p': '#d6ccbc', 'P': '#fbf8f1', 'q': '#f3eee4', 'g': '#8e877c',   // letter
     'o': '#c4913a', 'O': '#f2c66d',                                   // pocket watch
     'b': '#9c6533', 'B': '#c98b4e', 't': '#ebd3ae',                   // parcel
-    'r': '#d8452c',                                                   // wax seal
+    'r': '#d8452c',                                                   // wax seal, confetti
   },
 };
+// the same series on the app skin: the app body tones, the same props
+PALETTES.office_app = { ...PALETTES.office, '#': PALETTES.normal['#'], '%': PALETTES.normal['%'], 'E': PALETTES.normal.E };
 
 // --- overlay glyphs, drawn by the engine near the buddy (own colors) ---
 

@@ -267,35 +267,95 @@ function audioCtx() {
   return audio;
 }
 
-// `shape` nudges the melody: 'up' for something finished well, 'flat' for a
-// small acknowledgement like a bite.
-function chirp(count = 3, shape = 'up') {
+// Chirp moods. Each is a family, not a fixed tune: every call picks one of
+// its contours (pitch steps per blip, as fractions above the base) and
+// wobbles the timing a little, so the same moment never sounds canned.
+//   up     something finished well: a rising run
+//   happy  the big one (celebrating): runs that rise and hop
+//   light  a click, a pat: two or three quick high blips, softer
+//   flat   a small acknowledgement
+const CHIRPS = {
+  up:    { lift: 1.0,  gap: 0.055, decay: 0.075, level: 0.22, contours: [[0, 0.14, 0.28], [0, 0.1, 0.24, 0.3], [0, 0.18, 0.12, 0.3]] },
+  happy: { lift: 1.05, gap: 0.05,  decay: 0.07,  level: 0.22, contours: [[0, 0.16, 0.32, 0.2, 0.4], [0, 0.24, 0.12, 0.36], [0.1, 0, 0.2, 0.3, 0.44]] },
+  light: { lift: 1.4,  gap: 0.045, decay: 0.05,  level: 0.14, contours: [[0, 0.18], [0, 0.12, 0.26], [0.1, 0, 0.2], [0, 0.22, 0.14]] },
+  flat:  { lift: 1.0,  gap: 0.055, decay: 0.075, level: 0.22, contours: [[0, 0.07], [0.07, 0], [0, 0.07, 0]] },
+};
+
+// `count` trims (or repeats) the chosen contour; omit it for the contour's own
+// length. Returns false when sounds are off.
+function chirp(count, shape = 'up') {
   if (!settings.enabled || !settings.chirp) return false;
   const ctx = audioCtx();
   if (!ctx) return false;
+  const mood = CHIRPS[shape] || CHIRPS.up;
+  const contour = mood.contours[Math.floor(Math.random() * mood.contours.length)];
+  const n = count || contour.length;
   // follows the voice pitch, so the chirp belongs to the same character
-  const base = 300 * Math.max(0.6, Number(settings.pitch) || 1);
+  const base = 300 * Math.max(0.6, Number(settings.pitch) || 1) * mood.lift;
+  const peak = Math.max(0, Math.min(1, Number(settings.volume))) * mood.level;
   let t = ctx.currentTime + 0.01;
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < n; i++) {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = 2600;
     osc.type = 'triangle';
-    const step = shape === 'up' ? i * 0.14 : (i % 2) * 0.07;
     const detune = 1 + (Math.random() - 0.5) * 0.04;
-    osc.frequency.value = base * (1 + step) * detune;
-    const peak = Math.max(0, Math.min(1, Number(settings.volume))) * 0.22;
+    osc.frequency.value = base * (1 + contour[i % contour.length]) * detune;
     gain.gain.setValueAtTime(0.0001, t);
     gain.gain.linearRampToValueAtTime(peak, t + 0.005);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.075);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + mood.decay);
     osc.connect(lp); lp.connect(gain); gain.connect(ctx.destination);
     osc.start(t);
-    osc.stop(t + 0.09);
-    t += 0.055;
+    osc.stop(t + mood.decay + 0.015);
+    t += mood.gap * (0.9 + Math.random() * 0.2);
   }
-  speakingFor(count * 55 + 120); // bob along with the blips
+  speakingFor(Math.round(n * mood.gap * 1000) + 120); // bob along with the blips
+  return true;
+}
+
+// One "monch": a soft crunch (filtered noise) over a little low thump that
+// drops in pitch, like a mouthful. Timed by the host to each bite frame.
+let noiseBuf = null;
+function munch() {
+  if (!settings.enabled || !settings.chirp) return false;
+  const ctx = audioCtx();
+  if (!ctx) return false;
+  const vol = Math.max(0, Math.min(1, Number(settings.volume)));
+  const t = ctx.currentTime + 0.005;
+  const wob = 0.9 + Math.random() * 0.2; // no two bites alike
+
+  if (!noiseBuf) {
+    noiseBuf = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.2), ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuf;
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 900 * wob;
+  bp.Q.value = 0.8;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t);
+  ng.gain.linearRampToValueAtTime(vol * 0.28, t + 0.008);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+  noise.connect(bp); bp.connect(ng); ng.connect(ctx.destination);
+  noise.start(t);
+  noise.stop(t + 0.12);
+
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(190 * wob, t);
+  osc.frequency.exponentialRampToValueAtTime(85 * wob, t + 0.11);
+  const og = ctx.createGain();
+  og.gain.setValueAtTime(0.0001, t);
+  og.gain.linearRampToValueAtTime(vol * 0.35, t + 0.012);
+  og.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+  osc.connect(og); og.connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + 0.15);
   return true;
 }
 
@@ -338,7 +398,19 @@ async function announce(text) {
   return text;
 }
 
+// Whether announce() would speak right now, so the host can start an
+// animation that leads into the line (the letter arriving) without then
+// being told "too soon".
+function canAnnounce() {
+  if (!settings.enabled) return false;
+  if (Date.now() - lastSpokeAt < MIN_GAP_MS) return false;
+  return !(typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking);
+}
+function isSpeaking() {
+  return typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking;
+}
+
 export {
-  announce, chirp, say, warm, stop, get, set, nudge, onSpeaking,
+  announce, canAnnounce, isSpeaking, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
   lineForItem, sanitise, systemBackend, DEFAULTS, LIMITS,
 };

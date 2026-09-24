@@ -342,10 +342,12 @@
   const IS_TAURI = !!window.__TAURI__;
   const invoke = IS_TAURI ? window.__TAURI__.core.invoke : null;
 
-  // art style (app mascot / CLI mascot): persisted like the panel theme
-  let artStyle = 'app';
-  try { artStyle = localStorage.getItem('artStyle') || 'app'; } catch {}
-  if (!STYLES[artStyle]) artStyle = 'app';
+  // art style (app mascot / CLI mascot): persisted like the panel theme.
+  // The assistant defaults to the CLI buddy: it is the skin the animation
+  // series was drawn for first.
+  let artStyle = 'cli';
+  try { artStyle = localStorage.getItem('artStyle') || 'cli'; } catch {}
+  if (!STYLES[artStyle]) artStyle = 'cli';
 
   // the demo panel's state list follows the active style
   let STATES = Object.keys(STYLES[artStyle].clips);
@@ -560,7 +562,7 @@
     const on = !voice.get().chirp;
     voice.set({ chirp: on });
     syncVoiceButtons();
-    if (on) voice.chirp(3, 'up');
+    if (on) voice.chirp(null, 'up');
   };
   // the Test button reads the top item if there is one (with the greeting
   // forced on, so you hear the whole shape), else a sample
@@ -752,22 +754,39 @@
     return Math.round((c.frames.length / (c.fps || 2)) * 1000);
   }
 
+  // the intro alone: how long before a staged clip reaches its loop
+  function introMs(name) {
+    const c = pet.style.clips[name];
+    return c && c.stages ? c.stages.intro.reduce((t, s) => t + s.ms, 0) : 0;
+  }
+
   let flourishToken = 0;
-  // `ms` null = the clip's own length (clipMs), clamped to something sane
-  function flourish(state, ms, force = false) {
-    if (!pet.style.clips[state] || feeding || pet.state === 'wave') return false;
-    if (ms == null) ms = Math.min(9000, Math.max(1000, clipMs(state)));
-    if (!force && derived && derived.state !== 'idle') return false;
+  // Put him in a local clip until the returned release() is called (or a
+  // safety cap passes). Returns null when he isn't free for it.
+  const HOLD_CAP_MS = 30000;
+  function hold(state, force = false) {
+    if (!pet.style.clips[state] || feeding || pet.state === 'wave') return null;
+    if (!force && derived && derived.state !== 'idle') return null;
     const tok = ++flourishToken;
     flourishing = true;
     setState(state);
-    setTimeout(() => {
+    const release = () => {
       if (tok !== flourishToken) return;
       flourishing = false;
       applyDerived();
-    }, ms);
+    };
+    setTimeout(release, HOLD_CAP_MS);
+    return release;
+  }
+  // `ms` null = the clip's own length (clipMs), clamped to something sane
+  function flourish(state, ms, force = false) {
+    if (ms == null) ms = Math.min(9000, Math.max(1000, clipMs(state)));
+    const release = hold(state, force);
+    if (!release) return false;
+    setTimeout(release, ms);
     return true;
   }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   function tick() {
     const now = Date.now();
@@ -780,7 +799,7 @@
       applyDerived();
       if (prev && prev.count > 0 && !d.count && userCleared) {
         flourish('celebrate', 2000);
-        voice.chirp(4, 'up');
+        voice.chirp(null, 'happy');
       }
       userCleared = false;
       renderPopover();
@@ -825,7 +844,23 @@
     const text = voice.lineForItem(first.it, first.how, { minutes: first.minutes, count: news.length });
     speakBusy = true;
     let r;
-    try { r = await voice.announce(text); } finally { speakBusy = false; }
+    try {
+      // A message gets the letter: it arrives and he opens it first, then he
+      // reads it out while the reading loop plays, and puts it down when he
+      // has finished talking. Only when he's free and the voice is ready, so
+      // the letter never arrives to silence.
+      const release = first.it.kind === 'message' && voice.canAnnounce() ? hold('reading') : null;
+      if (release) {
+        await sleep(introMs('reading'));
+        r = await voice.announce(text);
+        await sleep(400); // speech takes a moment to start
+        for (let waited = 0; voice.isSpeaking() && waited < 25000; waited += 200) await sleep(200);
+        await sleep(r ? 600 : 1500); // a beat to finish reading, or a glance if muted
+        release();
+      } else {
+        r = await voice.announce(text);
+      }
+    } finally { speakBusy = false; }
     if (r === false) return; // too soon after the last line: next tick
     for (const c of news) {
       const a = announced[c.it.id] || {};
@@ -838,7 +873,6 @@
       };
     }
     saveAnnounced();
-    if (r && first.it.kind === 'message') flourish('reading', null);
   }
 
   // --- handing things to Claude. The pet holds no account and does no
@@ -1292,6 +1326,7 @@
   function clickBuddy() {
     const opening = popEl.hidden;
     setPopover(opening);
+    voice.chirp(null, 'light'); // a little happy noise every time he is clicked
     if (opening) flourish('happy_wiggle', null);
   }
 
@@ -1343,6 +1378,10 @@
 
   const PECKISH_MS = 3 * 60 * 60 * 1000;
   const BITE_MS = 333;
+  // the eating clip's three bites (both skins): monch, monch, monch
+  const MUNCH_MS = [333, 500, 667];
+  // ...and the happy bounce after the last one
+  const YUM_MS = 820;
   const MEAL_MS = 1334;
   const STRANDED_MS = 3000;
 
@@ -1386,10 +1425,11 @@
 
   pet.on('state', ({ state }) => {
     if (state !== 'eating') return;
+    for (const ms of MUNCH_MS) setTimeout(() => { if (pet.state === 'eating') voice.munch(); }, ms);
+    setTimeout(() => { if (pet.state === 'eating') voice.chirp(null, 'happy'); }, YUM_MS);
     setTimeout(() => {
       treatLayer.clear();
       if (pet.state !== 'eating') return;
-      voice.chirp(2, 'flat');
       treats = { count: treats.count + 1, lastFedAt: Date.now() };
       try { localStorage.setItem('treats', JSON.stringify(treats)); } catch {}
       treatBtn.classList.remove('peckish');
