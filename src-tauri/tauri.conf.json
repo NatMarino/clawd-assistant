@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ClawdAssistant",
+  "version": "0.1.0",
+  "identifier": "com.clawd.assistant",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "pet",
+        "title": "Claw’d",
+        "width": 160,
+        "height": 160,
+        "visible": false,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "NatMarino",
+    "homepage": "https://github.com/NatMarino/clawd-assistant",
+    "shortDescription": "Claw’d the assistant: a desktop pet your Claude keeps up to date",
+    "longDescription": "A crab on your screen who keeps an eye on your Slack, calendar, email and tasks through your own Claude, reads you what matters, reminds you, and hands tasks back to Claude.",
+    "copyright": "Copyright (c) 2026 rubberdonut67, NatMarino",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  }
+}

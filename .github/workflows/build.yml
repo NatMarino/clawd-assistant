@@ -1,0 +1,38 @@
+# Builds and tests the Windows pet on every push. The exe is uploaded as a
+# short-lived Actions artifact; release.yml makes the downloadable one.
+#
+# No Node, no tauri-cli, no NSIS: tauri.conf.json sets frontendDist to ../src
+# and the `custom-protocol` feature embeds that folder into the binary, so the
+# bare exe is self-contained.
+name: build
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build release exe
+        working-directory: src-tauri
+        run: cargo build --release --features custom-protocol
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clawd-assistant-exe
+          path: src-tauri/target/release/clawd-assistant.exe
+          if-no-files-found: error

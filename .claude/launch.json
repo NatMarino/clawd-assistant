@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "demo", "runtimeExecutable": "node", "runtimeArgs": ["tools/dev-server.js"], "port": 4870 }
+  ]
+}

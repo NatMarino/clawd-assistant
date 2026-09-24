@@ -1,0 +1,1448 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Claw'd</title>
+<style>
+  /* html/body must stay transparent or WebView2 paints white (plan §window) */
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; }
+
+  /* browser-demo desk backgrounds — added by script, never in Tauri */
+  body.demo-dark  { background: #1e1f24; }
+  body.demo-light { background: #e8e6e1; }
+
+  #pet-wrap {
+    position: fixed;
+    right: 40px; bottom: 24px;
+    width: 160px; height: 160px;
+  }
+  #pet-canvas { image-rendering: pixelated; display: block; }
+  /* the treat shares the buddy's unit space: same box, same scale, laid
+     straight over the pet canvas. Decorative only — never clickable. */
+  #treat-canvas {
+    position: absolute; left: 0; top: 0;
+    image-rendering: pixelated; pointer-events: none;
+  }
+
+  /* inside the real Tauri window the pet fills it and debug hides.
+     110px bottom margin = the window's BUBBLE_ROOM (keep in sync with Rust).
+     Horizontally CENTERED in the window: panels center on the sprite. */
+  body.tauri #pet-wrap { left: 50%; transform: translateX(-50%); bottom: 110px; right: auto; }
+  body.tauri #debug { display: none; }
+
+  #debug {
+    position: fixed; top: 14px; left: 14px;
+    background: rgba(20,20,24,.92); color: #ddd;
+    border: 1px solid #444; border-radius: 10px;
+    padding: 12px 14px; font-size: 12px;
+    display: grid; gap: 8px; width: 240px;
+  }
+  #debug h1 { font-size: 13px; margin: 0 0 2px; color: #e89478; }
+  #debug .states { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+  #debug button {
+    background: #33343c; color: #ddd; border: 1px solid #555;
+    border-radius: 6px; padding: 5px 6px; font-size: 12px; cursor: pointer;
+  }
+  #debug button:hover { background: #44454f; }
+  #debug button.active { background: #c1694f; color: #fff; border-color: #c1694f; }
+  #debug button.placeholder { border-style: dashed; }
+  #debug label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  #debug .row { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
+
+  /* the inbox popover: opens above the buddy (into the window's standing
+     headroom in Tauri), solid dark panel readable on any wallpaper */
+  #popover {
+    position: fixed; box-sizing: border-box;
+    background: rgba(22, 22, 27, .96); color: #e6e0da;
+    border: 1px solid #4a453f; border-radius: 12px;
+    padding: 10px 12px; font-size: 12px; line-height: 1.35;
+    max-height: 330px; overflow-y: auto;
+    box-shadow: 0 6px 24px rgba(0,0,0,.45);
+  }
+  #popover .pop-head {
+    font-weight: 600; color: #e89478; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #popover .mode-badge {
+    font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 8px;
+    background: #f2c14e; color: #3b2a00;
+  }
+  #popover .mode-badge[hidden] { display: none; }
+  /* how fresh Claude's last look is; turns amber when it is stale */
+  #popover .pop-feed { color: #b9b2ab; font-style: italic; font-size: 11px; margin: -2px 0 6px; }
+  #popover .pop-feed.warn { color: #e0a36b; font-style: normal; }
+  #popover .pop-quiet { color: #b9b2ab; font-style: italic; font-size: 11px; margin: -2px 0 6px; }
+  #popover .sec {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+    color: #8a857f; margin: 8px 0 2px;
+  }
+  /* source pill: which app an item came from */
+  #popover .surface {
+    flex: none; font-size: 9px; line-height: 1; padding: 3px 5px; border-radius: 8px;
+    background: #3a3f4a; color: #c9d1dc; letter-spacing: .02em;
+  }
+  #popover .sess { padding: 5px 6px; margin: 0 -6px; border-top: 1px solid #33302c; cursor: pointer; border-radius: 6px; }
+  #popover .sec + .sess { border-top: none; }
+  #popover .sess:hover { background: rgba(255, 255, 255, .06); }
+  body.panels-light #popover .sess:hover { background: rgba(0, 0, 0, .05); }
+  #popover .sess.nolink { cursor: default; }
+  #popover .sess .top { display: flex; align-items: center; gap: 6px; }
+  #popover .dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
+  #popover .proj { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #popover .age { color: #8a857f; margin-left: auto; flex: none; }
+  #popover .detail {
+    color: #a29c95; margin: 2px 0 0 14px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #popover .idea {
+    color: #c9a15f; margin: 3px 0 0 14px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  #popover .idea span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #popover .empty { color: #a29c95; padding: 4px 0; }
+  /* small in-row buttons: tick it off, talk it over, do it */
+  .mini {
+    flex: none; font: inherit; font-size: 11px; line-height: 1;
+    background: #33343c; color: #ddd; border: 1px solid #555;
+    border-radius: 6px; padding: 3px 7px; cursor: pointer;
+  }
+  .mini:hover { background: #44454f; }
+  .mini.tick { padding: 3px 5px; }
+  .mini.doit { background: #f2c14e; color: #3b2a00; border-color: #d49a2a; font-weight: 600; }
+  .mini.doit:hover { background: #ffd66e; }
+
+  /* speech bubble: what needs you, readable with zero clicks. Clickable:
+     it opens the thing it is about. */
+  #bubble {
+    position: fixed; cursor: pointer; box-sizing: border-box;
+    background: rgba(22, 22, 27, .96); color: #e6e0da;
+    border: 1px solid #e89478; border-radius: 12px;
+    padding: 10px 14px; font-size: 14px; line-height: 1.35;
+    max-width: 320px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.4);
+  }
+  #bubble:hover { border-color: #ffb08a; }
+  #bubble.calm { border-color: #9ab98f; }
+  #bubble .b-title { font-weight: 600; color: #e89478; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #bubble.calm .b-title { color: #9ab98f; }
+  #bubble .b-detail {
+    color: #b9b2ab;
+    max-height: 300px; overflow: hidden;
+    word-break: break-word;
+  }
+  #bubble .b-act { margin-top: 6px; display: flex; gap: 6px; align-items: center; font-size: 12px; }
+  /* tail points DOWN at his head: the bubble sits above him */
+  #bubble .b-tail {
+    position: absolute; bottom: -6px; left: 50%; margin-left: -6px;
+    width: 0; height: 0;
+    border-left: 6px solid transparent; border-right: 6px solid transparent;
+    border-top: 6px solid #e89478;
+  }
+  #bubble.calm .b-tail { border-top-color: #9ab98f; }
+
+  /* Ask Claw'd: one line, straight to Claude */
+  #askbox {
+    position: fixed; box-sizing: border-box;
+    background: rgba(22, 22, 27, .96); color: #e6e0da;
+    border: 1px solid #e89478; border-radius: 12px;
+    padding: 8px 10px; font-size: 12px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.4);
+  }
+  #askbox input {
+    width: 100%; box-sizing: border-box; font: inherit; font-size: 14px;
+    background: #2a2a31; color: #f1ebe5; border: 1px solid #555; border-radius: 8px;
+    padding: 6px 8px; outline: none;
+  }
+  #askbox input:focus { border-color: #e89478; }
+  #askbox .ask-hint { color: #8a857f; font-size: 11px; margin-top: 5px; }
+
+  /* a passing word after a click ("Sent to Claude"); never clickable */
+  #toast {
+    position: fixed; box-sizing: border-box; pointer-events: none;
+    background: rgba(22, 22, 27, .96); color: #e6e0da;
+    border: 1px solid #9ab98f; border-radius: 10px;
+    padding: 6px 10px; font-size: 12px; max-width: 300px;
+  }
+
+  /* shared circular button family: the "+" and the gear are siblings */
+  .round-btn {
+    display: flex; align-items: center; justify-content: center;
+    box-sizing: border-box; padding: 0; font: inherit;
+    position: relative; /* anchors the invisible hit ring */
+    background: rgba(22, 22, 27, .96); color: #e89478;
+    border: 1px solid #e89478; border-radius: 50%;
+    cursor: pointer; user-select: none;
+  }
+  /* invisible hit rings: a button's pseudo-element is part of its click
+     target — the FORGIVING area extends well past the visible circle */
+  #gearbtn::before, #newbtn::before, #treatbtn::before {
+    content: ''; position: absolute; inset: -8px; border-radius: 50%;
+  }
+  .round-btn:hover { background: #c1694f; color: #fff3ea; }
+  /* CRITICAL: display:flex on .round-btn overrides the UA's [hidden] rule */
+  .round-btn[hidden] { display: none; }
+  /* hover buttons: the "+" (Ask Claw'd) and the treat, as a tiny pair
+     centered right below the buddy. ONE positioned element — the row. */
+  #petbtns { position: fixed; display: flex; gap: 6px; align-items: center; }
+  #petbtns[hidden] { display: none; } /* flex would override [hidden] */
+  #newbtn, #treatbtn {
+    width: 18px; height: 18px;
+    font-size: 13px; line-height: 1;
+    box-shadow: 0 2px 8px rgba(0,0,0,.4);
+  }
+  #newbtn.clicked { background: #c1694f; color: #fff3ea; }
+  /* the treat glyph is drawn as PIXELS, never an emoji */
+  #treatbtn svg { display: block; }
+  @keyframes treat-peckish {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: .5; }
+  }
+  #treatbtn.peckish { animation: treat-peckish 2s ease-in-out infinite; }
+  /* popover gear: text-presentation glyph so it never spills its circle */
+  #popover .gear {
+    width: 28px; height: 28px; font-size: 15px;
+    font-family: 'Segoe UI Symbol', 'Segoe UI', sans-serif;
+    margin-left: auto; flex: none;
+  }
+  #popover .theme-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 8px; align-items: center; }
+  #popover .theme-row[hidden] { display: none; } /* flex would override [hidden] */
+  #popover .tone-grp { display: flex; gap: 5px; align-items: center; }
+  #popover .theme-row .lbl { color: #8a857f; font-size: 11px; margin-right: 2px; }
+  #popover .theme-row button {
+    background: #33343c; color: #ddd; border: 1px solid #555;
+    border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer;
+  }
+  #popover .theme-row button.active { background: #c1694f; border-color: #c1694f; color: #fff; }
+  #popover .theme-row button.active.doit { background: #f2c14e; border-color: #d49a2a; color: #3b2a00; }
+
+  /* light theme for the panels */
+  body.panels-light #popover, body.panels-light #bubble, body.panels-light #askbox, body.panels-light #toast {
+    background: rgba(247, 244, 240, .97); color: #3b3630; border-color: #c9beb4;
+  }
+  body.panels-light #askbox input { background: #fff; color: #3b3630; border-color: #c9beb4; }
+  body.panels-light .round-btn {
+    background: rgba(247, 244, 240, .97); color: #b05a3f; border-color: #c1694f;
+  }
+  body.panels-light .round-btn:hover { background: #c1694f; color: #fff3ea; }
+  body.panels-light #popover .pop-head { color: #b05a3f; }
+  body.panels-light #popover .sess { border-top-color: #e3dcd4; }
+  body.panels-light #popover .age { color: #8a8378; }
+  body.panels-light #popover .detail, body.panels-light #popover .empty { color: #6f6862; }
+  body.panels-light #popover .idea { color: #8a6420; }
+  body.panels-light #popover .pop-feed, body.panels-light #popover .pop-quiet { color: #8a8378; }
+  body.panels-light #popover .pop-feed.warn { color: #b0602a; }
+  body.panels-light #popover .surface { background: #dfe3ea; color: #4a5260; }
+  body.panels-light .mini { background: #e7e0d8; color: #3b3630; border-color: #c9beb4; }
+  body.panels-light .mini.doit { background: #f2c14e; color: #3b2a00; border-color: #d49a2a; }
+  body.panels-light #popover .theme-row button { background: #e7e0d8; color: #3b3630; border-color: #c9beb4; }
+  body.panels-light #popover .theme-row button.active { background: #c1694f; border-color: #c1694f; color: #fff; }
+  body.panels-light #popover .theme-row button.active.doit { background: #f2c14e; border-color: #d49a2a; color: #3b2a00; }
+  body.panels-light #bubble { border-color: #c1694f; }
+  body.panels-light #bubble .b-title { color: #b05a3f; }
+  body.panels-light #bubble.calm { border-color: #7f9f73; }
+  body.panels-light #bubble.calm .b-title { color: #5d7d52; }
+  body.panels-light #bubble .b-detail { color: #6f6862; }
+  body.panels-light #bubble .b-tail { border-top-color: #c1694f; }
+  body.panels-light #bubble.calm .b-tail { border-top-color: #7f9f73; }
+</style>
+</head>
+<body>
+
+<div id="pet-wrap">
+  <canvas id="pet-canvas"></canvas>
+</div>
+
+<!-- static skeleton: the gear and settings rows are built ONCE and never
+     replaced — a rebuilt button under a motionless cursor loses its hover
+     state and eats clicks. Only #pop-items contents get re-rendered. -->
+<div id="popover" hidden>
+  <div class="pop-head">
+    <span id="pop-count"></span>
+    <span id="pop-mode" class="mode-badge" hidden>do it mode</span>
+    <button id="gearbtn" class="gear round-btn" title="settings">&#9881;&#xFE0E;</button>
+  </div>
+  <div id="pop-feed" class="pop-feed" hidden></div>
+  <div id="pop-treats" class="pop-quiet"></div>
+  <div id="mode-row" class="theme-row" hidden>
+    <span class="lbl">mode:</span>
+    <button data-mode="propose" title="Claude suggests; nothing happens without you">propose</button>
+    <button data-mode="doit" class="doit" title="Adds a Do it button to Claude's ideas. Each press hands one idea to Claude to carry out.">do it</button>
+  </div>
+  <div id="theme-row" class="theme-row" hidden>
+    <span class="lbl">theme:</span>
+    <button data-theme="system">system</button>
+    <button data-theme="dark">dark</button>
+    <button data-theme="light">light</button>
+  </div>
+  <div id="art-row" class="theme-row" hidden>
+    <span class="lbl">skin:</span>
+    <button data-art="app">app</button>
+    <button data-art="cli">cli</button>
+  </div>
+  <div id="voice-row" class="theme-row" hidden>
+    <span class="lbl">voice:</span>
+    <button data-voice="on">on</button>
+    <button data-voice="off">off</button>
+    <button id="voice-chirp" title="little chirps for small happy moments">chirp</button>
+    <button id="voice-test" title="hear it now">test</button>
+  </div>
+  <!-- one button per installed English voice, filled in once at startup -->
+  <div id="voice-pick" class="theme-row" hidden>
+    <span class="lbl">who:</span>
+  </div>
+  <div id="voice-tone" class="theme-row" hidden>
+    <span class="tone-grp">
+      <span class="lbl">pitch:</span>
+      <button data-tone="pitch" data-step="-0.1">&minus;</button>
+      <span class="lbl" id="pitch-readout">1.15</span>
+      <button data-tone="pitch" data-step="0.1">+</button>
+    </span>
+    <span class="tone-grp">
+      <span class="lbl">speed:</span>
+      <button data-tone="rate" data-step="-0.1">&minus;</button>
+      <span class="lbl" id="rate-readout">1.00</span>
+      <button data-tone="rate" data-step="0.1">+</button>
+    </span>
+  </div>
+  <div id="pop-items"></div>
+</div>
+<div id="bubble" hidden></div>
+<div id="askbox" hidden>
+  <input id="ask-input" type="text" maxlength="600" autocomplete="off" spellcheck="true"
+         placeholder="Ask Claw'd… (Enter sends, Esc closes)">
+  <div class="ask-hint">Claude will show you its plan first. Nothing gets sent without your OK.</div>
+</div>
+<div id="toast" hidden></div>
+<div id="petbtns" hidden>
+  <div id="newbtn" class="round-btn" title="Ask Claw'd">+</div>
+  <div id="treatbtn" class="round-btn" title="Give Claw'd a treat">
+    <svg viewBox="0 0 6 6" width="12" height="12" shape-rendering="crispEdges" aria-hidden="true" focusable="false">
+      <path fill="currentColor" fill-rule="evenodd"
+            d="M1 0h4v1h1v4h-1v1h-4v-1h-1v-4h1z M1 2h1v1h-1z M4 2h1v1h-1z M2 3h1v1h-1z"/>
+    </svg>
+  </div>
+</div>
+
+<div id="debug">
+  <h1>Claw'd debug</h1>
+  <div class="states" id="state-buttons"></div>
+  <div class="row"><button id="demo-inbox">demo inbox</button><button id="demo-clear">clear</button></div>
+  <div class="row"><span>size: <span id="size-readout">1.00×</span></span>
+    <span style="color:#888">(+ / − keys, 0 resets)</span></div>
+  <label><input type="checkbox" id="bg-light"> light desk</label>
+</div>
+
+<script type="module">
+  import { Pet } from './pet.js';
+  import { STYLES } from './styles.js';
+  import { TreatSprite, FALL_MS } from './treats.js';
+  import * as voice from './voice.js';
+
+  const IS_TAURI = !!window.__TAURI__;
+  const invoke = IS_TAURI ? window.__TAURI__.core.invoke : null;
+
+  // art style (app mascot / CLI mascot): persisted like the panel theme
+  let artStyle = 'app';
+  try { artStyle = localStorage.getItem('artStyle') || 'app'; } catch {}
+  if (!STYLES[artStyle]) artStyle = 'app';
+
+  // the demo panel's state list follows the active style
+  let STATES = Object.keys(STYLES[artStyle].clips);
+
+  // forgiveness halo (CSS px) around the sprite's envelope: part of the OS
+  // hit region (reportBounds) AND of the buddy's own press region (onBuddy)
+  const HALO = 20;
+
+  // Canvas unit the overhead panels clear: above the TALLEST common frames so
+  // they never cover the character. Every overhead panel hangs off this one
+  // number so they can never drift apart.
+  const SPRITE_CLEAR_UNIT = 52;
+
+  let savedScale = 1.75;
+  try { savedScale = parseFloat(localStorage.getItem('petScale')) || 1.75; } catch {}
+
+  const canvas = document.getElementById('pet-canvas');
+  const wrap = document.getElementById('pet-wrap');
+  const pet = new Pet(canvas, IS_TAURI ? 1 : savedScale, artStyle);
+
+  const popEl = document.getElementById('popover');
+  const bubEl = document.getElementById('bubble');
+  const askEl = document.getElementById('askbox');
+  const askInput = document.getElementById('ask-input');
+  const toastEl = document.getElementById('toast');
+
+  function reportBounds() {
+    if (!IS_TAURI) return;
+    // page-relative: the union of the buddy and every visible panel, so
+    // each one gets OS-level clicks while the rest of the window stays
+    // click-through
+    const b = pet.opaqueBounds();
+    const r = wrap.getBoundingClientRect();
+    let x = b.x + r.left, y = b.y + r.top;
+    let right = x + b.w, bottom = y + b.h;
+    for (const el of [popEl, btnsEl, bubEl, askEl]) {
+      if (el.hidden) continue;
+      const pr = el.getBoundingClientRect();
+      x = Math.min(x, pr.left); y = Math.min(y, pr.top);
+      right = Math.max(right, pr.right); bottom = Math.max(bottom, pr.bottom);
+    }
+    x -= HALO; y -= HALO; right += HALO; bottom += HALO;
+    // PHYSICAL px: devicePixelRatio is the exact CSS->physical factor
+    const dpr = window.devicePixelRatio || 1;
+    invoke('set_opaque_bounds', { x: x * dpr, y: y * dpr, w: (right - x) * dpr, h: (bottom - y) * dpr });
+  }
+
+  // --- hover buttons: the "+" (Ask Claw'd) and the treat show together by
+  //     the buddy's feet while the cursor is over him ---
+  const btnsEl = document.getElementById('petbtns');
+  const btnEl = document.getElementById('newbtn');
+  const treatBtn = document.getElementById('treatbtn');
+  let btnHideTimer = null;
+
+  function showNewBtn() {
+    clearTimeout(btnHideTimer);
+    btnHideTimer = null;
+    // every panel supersedes them, and a meal in progress hides them
+    if (!btnsEl.hidden || !popEl.hidden || !bubEl.hidden || !askEl.hidden || feeding) return;
+    const r = wrap.getBoundingClientRect();
+    const rb = pet.restBounds();
+    const feetCss = r.top + (rb.y + rb.h) * pet.scale;
+    btnsEl.style.top = (feetCss + 6) + 'px';
+    treatBtn.classList.toggle('peckish', isPeckish());
+    btnsEl.hidden = false;
+    placeCenteredOnBuddy(btnsEl);
+    reportBounds();
+  }
+
+  function scheduleHideNewBtn() {
+    clearTimeout(btnHideTimer);
+    btnHideTimer = setTimeout(() => hideBtns(), 1200);
+  }
+
+  function hideBtns() {
+    clearTimeout(btnHideTimer);
+    btnHideTimer = null;
+    if (btnsEl.hidden) return;
+    btnsEl.hidden = true;
+    reportBounds();
+  }
+
+  canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    if (pet.hitTest(e.clientX - rect.left, e.clientY - rect.top)) showNewBtn();
+    else if (!IS_TAURI) scheduleHideNewBtn();
+  });
+  canvas.addEventListener('mouseleave', () => { if (!IS_TAURI) scheduleHideNewBtn(); });
+  btnsEl.addEventListener('mouseenter', () => { clearTimeout(btnHideTimer); btnHideTimer = null; });
+  btnsEl.addEventListener('mouseleave', () => { if (!IS_TAURI) scheduleHideNewBtn(); });
+  btnEl.addEventListener('click', () => {
+    btnEl.classList.add('clicked');
+    setTimeout(() => btnEl.classList.remove('clicked'), 300);
+    showAsk();
+  });
+  treatBtn.addEventListener('click', () => feed());
+
+  // --- settings (the gear): mode, panel theme, skin, voice ---
+  const popCount = document.getElementById('pop-count');
+  const popMode = document.getElementById('pop-mode');
+  const popFeed = document.getElementById('pop-feed');
+  const popItems = document.getElementById('pop-items');
+  const modeRow = document.getElementById('mode-row');
+  const themeRow = document.getElementById('theme-row');
+  const artRow = document.getElementById('art-row');
+  const voiceRow = document.getElementById('voice-row');
+  const voicePickRow = document.getElementById('voice-pick');
+  const toneRow = document.getElementById('voice-tone');
+  const gearBtn = document.getElementById('gearbtn');
+  const SETTINGS_ROWS = [modeRow, themeRow, artRow, voiceRow, voicePickRow, toneRow];
+
+  let panelTheme = 'system';
+  try { panelTheme = localStorage.getItem('panelTheme') || 'system'; } catch {}
+  const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  function applyPanelTheme() {
+    const light = panelTheme === 'light' || (panelTheme === 'system' && !darkQuery.matches);
+    document.body.classList.toggle('panels-light', light);
+  }
+  function syncThemeButtons() {
+    themeRow.querySelectorAll('button[data-theme]').forEach((b) => {
+      b.classList.toggle('active', panelTheme === b.dataset.theme);
+    });
+  }
+  function setPanelTheme(t) {
+    panelTheme = t;
+    try { localStorage.setItem('panelTheme', t); } catch {}
+    applyPanelTheme();
+    syncThemeButtons();
+  }
+  darkQuery.addEventListener('change', () => { if (panelTheme === 'system') applyPanelTheme(); });
+  applyPanelTheme();
+  syncThemeButtons();
+  gearBtn.onclick = (e) => {
+    e.stopPropagation();
+    const show = themeRow.hidden;
+    SETTINGS_ROWS.forEach((r) => { r.hidden = !show; });
+    reportBounds();
+  };
+  themeRow.querySelectorAll('button[data-theme]').forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); setPanelTheme(b.dataset.theme); };
+  });
+
+  // --- mode: Propose (the default) or Do it. Do it only ADDS a button to
+  //     Claude's ideas; each press is still one deliberate click on one
+  //     idea. Always starts as Propose on a fresh install. He wears a hard
+  //     hat while it is on, so the mode can never be forgotten. ---
+  let mode = 'propose';
+  try { mode = localStorage.getItem('mode') === 'doit' ? 'doit' : 'propose'; } catch {}
+  function syncModeButtons() {
+    modeRow.querySelectorAll('button[data-mode]').forEach((b) => {
+      b.classList.toggle('active', mode === b.dataset.mode);
+    });
+    popMode.hidden = mode !== 'doit';
+    pet.setAccessory(mode === 'doit' ? 'hardhat' : null);
+  }
+  function setMode(m) {
+    if (m === mode) return;
+    mode = m;
+    try { localStorage.setItem('mode', m); } catch {}
+    syncModeButtons();
+    voice.say(m === 'doit' ? 'Okay. Hard hat on.' : 'Hard hat off. Back to ideas only.');
+    renderPopover();
+    updateBubble(true);
+  }
+  syncModeButtons();
+  modeRow.querySelectorAll('button[data-mode]').forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); setMode(b.dataset.mode); };
+  });
+
+  // --- art style row: swaps the buddy's whole clip set in place ---
+  function syncArtButtons() {
+    artRow.querySelectorAll('button[data-art]').forEach((b) => {
+      b.classList.toggle('active', artStyle === b.dataset.art);
+    });
+  }
+  function setArtStyle(name) {
+    if (!STYLES[name]) return;
+    artStyle = name;
+    try { localStorage.setItem('artStyle', name); } catch {}
+    pet.setStyle(name);
+    syncArtButtons();
+    STATES = Object.keys(pet.style.clips);
+    buildStateButtons();
+    reportBounds();
+  }
+  syncArtButtons();
+  artRow.querySelectorAll('button[data-art]').forEach((b) => {
+    b.onclick = (e) => { e.stopPropagation(); setArtStyle(b.dataset.art); };
+  });
+
+  // --- voice row ---
+  const voiceChirpBtn = document.getElementById('voice-chirp');
+  function syncVoiceButtons() {
+    const v = voice.get();
+    voiceRow.querySelectorAll('button[data-voice]').forEach((b) => {
+      b.classList.toggle('active', (b.dataset.voice === 'on') === !!v.enabled);
+    });
+    voiceChirpBtn.classList.toggle('active', !!v.chirp);
+  }
+  syncVoiceButtons();
+  voiceRow.querySelectorAll('button[data-voice]').forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const on = b.dataset.voice === 'on';
+      voice.set({ enabled: on });
+      if (on) voice.warm(); else voice.stop();
+      syncVoiceButtons();
+    };
+  });
+  voiceChirpBtn.onclick = (e) => {
+    e.stopPropagation();
+    const on = !voice.get().chirp;
+    voice.set({ chirp: on });
+    syncVoiceButtons();
+    if (on) voice.chirp(3, 'up');
+  };
+  // the Test button reads the top item if there is one (with the greeting
+  // forced on, so you hear the whole shape), else a sample
+  function sampleLine() {
+    const top = inbox && inbox.items && inbox.items[0];
+    return voice.lineForItem(top || { kind: 'waiting', who: 'Claw’d', title: 'This is what I sound like when something needs you.' },
+      'new', { forceGreeting: true });
+  }
+  document.getElementById('voice-test').onclick = (e) => {
+    e.stopPropagation();
+    voice.say(sampleLine());
+  };
+
+  // --- voice picker: one button per installed English voice, built ONCE ---
+  let voicePickBuilt = false;
+  const shortVoiceName = (n) => n.replace(/^Microsoft\s+/i, '').replace(/\s*[-–(].*$/, '').trim() || n;
+  function syncVoicePick() {
+    const want = voice.get().voiceName;
+    voicePickRow.querySelectorAll('button[data-voice-name]').forEach((b) => {
+      b.classList.toggle('active', b.dataset.voiceName === want);
+    });
+  }
+  function buildVoicePick() {
+    const list = voice.systemBackend.voices();
+    if (voicePickBuilt || !list.length) return;
+    voicePickBuilt = true;
+    list.slice(0, 8).forEach((v) => {
+      const b = document.createElement('button');
+      b.dataset.voiceName = v.name;
+      b.textContent = shortVoiceName(v.name);
+      b.title = v.name;
+      b.onclick = (e) => {
+        e.stopPropagation();
+        voice.set({ voiceName: v.name });
+        syncVoicePick();
+        voice.say(sampleLine());
+      };
+      voicePickRow.appendChild(b);
+    });
+    syncVoicePick();
+    reportBounds();
+  }
+  buildVoicePick();
+  if (typeof speechSynthesis !== 'undefined') {
+    speechSynthesis.addEventListener('voiceschanged', buildVoicePick);
+  }
+
+  // --- tone: pitch and speed, previewed on every press ---
+  const pitchReadout = document.getElementById('pitch-readout');
+  const rateReadout = document.getElementById('rate-readout');
+  function syncTone() {
+    const v = voice.get();
+    pitchReadout.textContent = Number(v.pitch).toFixed(2);
+    rateReadout.textContent = Number(v.rate).toFixed(2);
+  }
+  syncTone();
+  toneRow.querySelectorAll('button[data-tone]').forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      voice.nudge(b.dataset.tone, parseFloat(b.dataset.step));
+      syncTone();
+      voice.say(sampleLine());
+    };
+  });
+
+  // ======================================================================
+  // The inbox. Rust (state.rs) keeps the record: items Claude sent, with
+  // times already parsed to epoch ms. Everything below turns that record
+  // plus the clock into what he does — which clip, what the bubble says,
+  // when he speaks — so reminders come due and nudges fire without Claude.
+  // ======================================================================
+
+  // hop this long before a meeting starts
+  const REMIND_LEAD_MS = 2 * 60 * 1000;
+  // ...and say "it's started" once it is this far past
+  const LATE_AFTER_MS = 60 * 1000;
+  // a new delivery waves its package for this long unless opened sooner
+  const FRESH_DELIVERY_MS = 10 * 60 * 1000;
+  // nudges per waiting item before he lets it be (it stays in the list)
+  const MAX_NUDGES = 3;
+
+  const KIND_RANK = { waiting: 4, reminder: 3, message: 2, delivery: 1, note: 0 };
+  const KIND_COLOR = {
+    waiting: '#e89478', reminder: '#c9a15f', message: '#8fb3c9', delivery: '#9ab98f', note: '#8a8a8a',
+  };
+  const SOURCE_LABEL = {
+    slack: 'Slack', gcal: 'Calendar', calendar: 'Calendar', gmail: 'Gmail', email: 'Email',
+    asana: 'Asana', drive: 'Drive', gdrive: 'Drive', claude: 'Claude',
+  };
+  const sourceLabel = (it) => SOURCE_LABEL[(it.source || '').toLowerCase()] || it.source || '';
+
+  let inbox = null;          // last payload from Rust
+  let derived = null;        // what he is showing, derived from inbox + clock
+  const opened = new Set();  // deliveries clicked this run
+  let userCleared = false;   // the last change to "waiting" was the user's doing
+
+  // Which items he has already spoken about, so a restart or the next sweep
+  // re-sending the same message stays quiet. Per item: `sig` (what was
+  // said about), `at` (when), `nudges`, and for reminders `soon` / `late`.
+  let announced = {};
+  try { announced = JSON.parse(localStorage.getItem('announced') || '{}') || {}; } catch {}
+  function saveAnnounced() {
+    try { localStorage.setItem('announced', JSON.stringify(announced)); } catch {}
+  }
+  const sigOf = (it) => `${it.kind}|${it.title}|${it.due_ms || ''}`;
+
+  function fmtAge(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm';
+    const h = Math.floor(m / 60);
+    if (h < 48) return h + 'h' + (m % 60 ? (m % 60) + 'm' : '');
+    return Math.floor(h / 24) + 'd';
+  }
+  const fmtClock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  function relDue(due, now) {
+    const d = due - now;
+    if (Math.abs(d) < 60000) return 'now';
+    return d > 0 ? 'in ' + fmtAge(d) : fmtAge(-d) + ' late';
+  }
+
+  // needs you right now: every open "waiting" item, and a reminder once it
+  // is within the lead time (or has no time at all)
+  function needsYou(it, now) {
+    if (it.handed_off) return false;
+    if (it.kind === 'waiting') return true;
+    return it.kind === 'reminder' && (it.due_ms == null || now >= it.due_ms - REMIND_LEAD_MS);
+  }
+  function attentionList(p, now) {
+    return p ? p.items.filter((it) => needsYou(it, now)) : [];
+  }
+
+  // How fresh Claude's last look is. Stale is his "blind" state: the
+  // silent-failure rule from the coding Claw'd — a pet that stopped hearing
+  // from Claude must never look peacefully idle.
+  function feedStatus(p, now) {
+    if (!p) return { stale: false, text: '' };
+    if (p.last_heard_ms == null) {
+      return { stale: true, text: 'Claude hasn’t checked in yet. Finish setup (SETUP.md).' };
+    }
+    const gap = now - p.last_heard_ms;
+    const quiet = p.quiet_until_ms && now < p.quiet_until_ms;
+    if (quiet) return { stale: false, text: `off until ${fmtClock(p.quiet_until_ms)} · last check ${fmtAge(gap)} ago` };
+    const limit = 2 * Math.max(1, p.sweep_minutes) * 60000 + 60000;
+    if (gap > limit) return { stale: true, text: `haven’t heard from Claude in ${fmtAge(gap)}` };
+    return { stale: false, text: `last check ${fmtAge(gap)} ago` };
+  }
+
+  function derive(p, now) {
+    if (!p) return { state: IS_TAURI ? 'sleeping' : 'idle' };
+    const att = attentionList(p, now);
+    if (att.length) {
+      const top = att[0]; // Rust sorts by urgency, then oldest
+      return { state: top.kind === 'reminder' ? 'clock' : 'needs_input', top, count: att.length };
+    }
+    const fresh = p.items.find((it) => it.kind === 'delivery' && !opened.has(it.id)
+      && now - it.first_seen_ms < FRESH_DELIVERY_MS);
+    if (fresh) return { state: 'package', top: fresh, count: 0 };
+    const fs = feedStatus(p, now);
+    if (fs.stale) return { state: 'blind', detail: fs.text, count: 0 };
+    return { state: 'idle', count: 0 };
+  }
+
+  // Put him in the derived state — unless something local is playing (the
+  // boot wave, a meal, a flourish), which hands back here when it ends. A
+  // calm derived state never wakes a napping crab.
+  let flourishing = false;
+  function applyDerived() {
+    const d = derived;
+    if (!d || flourishing || feeding || pet.state === 'wave') return;
+    if (d.state === 'idle' && pet.state === 'sleeping') return;
+    try { setState(d.state, d.detail || null); } catch (err) { console.error('bad derived state', d, err); }
+  }
+
+  // A short local clip (reading, celebrate, happy_wiggle...), then back to
+  // the derived state. Never papers over something that needs you, unless
+  // `force` (the user just did something and deserves to see it land).
+  let flourishToken = 0;
+  function flourish(state, ms, force = false) {
+    if (!pet.style.clips[state] || feeding || pet.state === 'wave') return false;
+    if (!force && derived && derived.state !== 'idle') return false;
+    const tok = ++flourishToken;
+    flourishing = true;
+    setState(state);
+    setTimeout(() => {
+      if (tok !== flourishToken) return;
+      flourishing = false;
+      applyDerived();
+    }, ms);
+    return true;
+  }
+
+  function tick() {
+    const now = Date.now();
+    const prev = derived;
+    const d = derive(inbox, now);
+    derived = d;
+    const topId = (x) => (x && x.top ? x.top.id : '');
+    const changed = !prev || prev.state !== d.state || topId(prev) !== topId(d) || prev.count !== d.count;
+    if (changed) {
+      applyDerived();
+      if (prev && prev.count > 0 && !d.count && userCleared) {
+        flourish('celebrate', 2000);
+        voice.chirp(4, 'up');
+      }
+      userCleared = false;
+      renderPopover();
+    }
+    updateBubble(changed);
+    if (voiceArmed) speakTick(now);
+  }
+
+  // --- what he says, and when ---
+  let speakBusy = false;
+  async function speakTick(now) {
+    if (!inbox || speakBusy) return;
+    const cands = [];
+    const live = new Set();
+    for (const it of inbox.items) {
+      live.add(it.id);
+      if (it.handed_off || it.kind === 'note') continue;
+      const a = announced[it.id];
+      if (it.kind === 'reminder' && it.due_ms != null) {
+        // a timed reminder speaks when it matters, not when it arrives
+        if (now >= it.due_ms + LATE_AFTER_MS) {
+          if (!a || !a.late) cands.push({ it, how: 'late', prio: 6 });
+        } else if (now >= it.due_ms - REMIND_LEAD_MS) {
+          if (!a || !a.soon) cands.push({ it, how: 'soon', prio: 6, minutes: Math.max(0, Math.round((it.due_ms - now) / 60000)) });
+        }
+        continue;
+      }
+      if (!a || a.sig !== sigOf(it)) { cands.push({ it, how: 'new', prio: KIND_RANK[it.kind] ?? 1 }); continue; }
+      if (it.kind === 'waiting' && (a.nudges || 0) < MAX_NUDGES
+          && now - a.at > Math.max(1, inbox.nudge_minutes) * 60000) {
+        cands.push({ it, how: 'nudge', prio: 3 });
+      }
+    }
+    // forget items that are gone, so the store never grows without bound
+    let pruned = false;
+    for (const id of Object.keys(announced)) if (!live.has(id)) { delete announced[id]; pruned = true; }
+    if (!cands.length) { if (pruned) saveAnnounced(); return; }
+
+    cands.sort((a, b) => b.prio - a.prio || (b.it.urgency || 0) - (a.it.urgency || 0));
+    const first = cands[0];
+    const news = first.how === 'new' ? cands.filter((c) => c.how === 'new') : [first];
+    const text = voice.lineForItem(first.it, first.how, { minutes: first.minutes, count: news.length });
+    speakBusy = true;
+    let r;
+    try { r = await voice.announce(text); } finally { speakBusy = false; }
+    if (r === false) return; // too soon after the last line: next tick
+    for (const c of news) {
+      const a = announced[c.it.id] || {};
+      announced[c.it.id] = {
+        sig: sigOf(c.it),
+        at: now,
+        nudges: c.how === 'nudge' ? (a.nudges || 0) + 1 : (c.how === 'new' ? 0 : a.nudges || 0),
+        soon: a.soon || c.how === 'soon' || c.how === 'late',
+        late: a.late || c.how === 'late',
+      };
+    }
+    saveAnnounced();
+    if (r && first.it.kind === 'message') flourish('reading', 3500);
+  }
+
+  // --- handing things to Claude. The pet holds no account and does no
+  //     work itself: it opens Claude with the words already written. The
+  //     prompt also goes on the clipboard, in case the app drops the
+  //     prefill (the Phase 0 question). ---
+  function describe(it) {
+    return [
+      sourceLabel(it) && `(${sourceLabel(it)})`,
+      it.who && `from ${it.who}`,
+      it.title,
+      it.link && `link: ${it.link}`,
+    ].filter(Boolean).join(' ');
+  }
+  async function sendToClaude(prompt, note) {
+    let copied = false;
+    try { await navigator.clipboard.writeText(prompt); copied = true; } catch {}
+    if (IS_TAURI) invoke('ask_claude', { prompt });
+    showToast(note + (copied ? ' If the message box is empty, press Ctrl+V.' : ''));
+  }
+  function talkOver(it) {
+    const p = it.proposal || {};
+    sendToClaude(
+      'Using the clawd skill, let’s look at this together. Don’t send or change anything yet.\n\n'
+      + describe(it) + (p.summary ? `\nYour idea was: ${p.summary}` : '')
+      + (p.draft_link ? `\nDraft: ${p.draft_link}` : '') + `\n(clawd item ${it.id})`,
+      'Opened in Claude.');
+  }
+  function doIt(it) {
+    const p = it.proposal || {};
+    sendToClaude(
+      'Using the clawd skill, carry out this proposal. I approved it by pressing Do it on Claw’d.\n\n'
+      + `Proposal: ${p.summary}\nAbout: ${describe(it)}`
+      + (p.draft_link ? `\nDraft: ${p.draft_link}` : '') + `\n(clawd item ${it.id})`,
+      'Handed to Claude.');
+    if (IS_TAURI) invoke('hand_off_item', { id: it.id });
+    it.handed_off = true; // optimistic; Rust confirms on its next publish
+    flourish('working', 3000, true);
+    tick();
+  }
+  function tickOff(it) {
+    if (IS_TAURI) invoke('dismiss_item', { id: it.id });
+    if (inbox) inbox = { ...inbox, items: inbox.items.filter((x) => x.id !== it.id) };
+    userCleared = true;
+    tick();
+    renderPopover();
+  }
+  function openItem(it) {
+    if (it.kind === 'delivery') opened.add(it.id);
+    if (it.link) openLink(it.link);
+    userCleared = true;
+    tick();
+  }
+  function openLink(url) {
+    if (IS_TAURI && url) invoke('open_link', { url });
+    else if (url) console.log('would open', url);
+  }
+
+  // --- popover: the inbox, grouped. Rows are rebuilt on change only;
+  //     ages tick in place. ---
+  function renderPopover() {
+    if (popEl.hidden) return;
+    const now = Date.now();
+    popItems.textContent = '';
+    popTreats.textContent = treatLine();
+    if (!inbox) {
+      popCount.textContent = IS_TAURI ? 'starting up…' : 'browser demo — try “demo inbox”';
+      popFeed.hidden = true;
+      return;
+    }
+    const att = attentionList(inbox, now);
+    popCount.textContent = att.length ? `${att.length} waiting on you` : 'all clear';
+    const fs = feedStatus(inbox, now);
+    const err = inbox.feed_error ? 'couldn’t read ' + inbox.feed_error : '';
+    popFeed.hidden = !(err || fs.text);
+    popFeed.textContent = err || fs.text;
+    popFeed.classList.toggle('warn', !!err || fs.stale);
+
+    const open = inbox.items.filter((it) => !it.handed_off);
+    const upcoming = open.filter((it) => it.kind === 'reminder' && !needsYou(it, now))
+      .sort((a, b) => (a.due_ms || 0) - (b.due_ms || 0));
+    const groups = [
+      ['Waiting on you', att],
+      ['Coming up', upcoming],
+      ['Messages', open.filter((it) => it.kind === 'message')],
+      ['Deliveries', open.filter((it) => it.kind === 'delivery')],
+      ['Notes', open.filter((it) => !(it.kind in KIND_RANK) || it.kind === 'note')],
+      ['With Claude', inbox.items.filter((it) => it.handed_off)],
+    ];
+    let any = false;
+    for (const [title, list] of groups) {
+      if (!list.length) continue;
+      any = true;
+      const h = document.createElement('div');
+      h.className = 'sec';
+      h.textContent = title;
+      popItems.appendChild(h);
+      for (const it of list) popItems.appendChild(itemRow(it, now));
+    }
+    if (!any) {
+      const e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = 'Nothing right now. Whatever Claude finds shows up here.';
+      popItems.appendChild(e);
+    }
+  }
+
+  function itemRow(it, now) {
+    const row = document.createElement('div');
+    row.className = 'sess' + (it.link ? '' : ' nolink');
+    if (it.link) row.title = 'open it';
+    if (it.rule) row.title = (row.title ? row.title + ' · ' : '') + 'rule: ' + it.rule;
+    row.onclick = () => openItem(it);
+    const top = document.createElement('div');
+    top.className = 'top';
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = KIND_COLOR[it.kind] || KIND_COLOR.note;
+    const name = document.createElement('span');
+    name.className = 'proj';
+    // a person when there is one ("Priya"), else the thing itself ("Design review")
+    name.textContent = it.who || it.title || sourceLabel(it) || it.id;
+    top.append(dot, name);
+    if (sourceLabel(it)) {
+      const pill = document.createElement('span');
+      pill.className = 'surface';
+      pill.textContent = sourceLabel(it);
+      top.appendChild(pill);
+    }
+    const age = document.createElement('span');
+    age.className = 'age';
+    if (it.kind === 'reminder' && it.due_ms != null) {
+      age.dataset.due = it.due_ms;
+      age.textContent = relDue(it.due_ms, now);
+      age.title = fmtClock(it.due_ms);
+    } else {
+      const at = it.at_ms || it.first_seen_ms;
+      age.dataset.at = at;
+      age.textContent = fmtAge(now - at);
+    }
+    top.appendChild(age);
+    if (!it.handed_off) {
+      const tickBtn = document.createElement('button');
+      tickBtn.className = 'mini tick';
+      tickBtn.textContent = '✓';
+      tickBtn.title = 'done, clear it';
+      tickBtn.onclick = (e) => { e.stopPropagation(); tickOff(it); };
+      top.appendChild(tickBtn);
+    }
+    row.appendChild(top);
+    if (it.title && it.who) {
+      const d = document.createElement('div');
+      d.className = 'detail';
+      d.textContent = it.title;
+      d.title = it.title;
+      row.appendChild(d);
+    }
+    if (it.proposal && it.proposal.summary && !it.handed_off) {
+      const idea = document.createElement('div');
+      idea.className = 'idea';
+      const txt = document.createElement('span');
+      txt.textContent = 'Idea: ' + it.proposal.summary;
+      txt.title = it.proposal.summary;
+      idea.appendChild(txt);
+      const b = document.createElement('button');
+      if (mode === 'doit') {
+        b.className = 'mini doit';
+        b.textContent = 'Do it';
+        b.title = 'hand this one idea to Claude to carry out';
+        b.onclick = (e) => { e.stopPropagation(); doIt(it); };
+      } else {
+        b.className = 'mini';
+        b.textContent = 'Talk it over';
+        b.title = 'open it in Claude; nothing gets sent';
+        b.onclick = (e) => { e.stopPropagation(); talkOver(it); };
+      }
+      idea.appendChild(b);
+      row.appendChild(idea);
+    }
+    return row;
+  }
+
+  // ONE centering rule for every panel: sprite center is the reference
+  function placeCenteredOnBuddy(el, cssWidth) {
+    if (cssWidth != null) el.style.width = cssWidth + 'px';
+    const r = wrap.getBoundingClientRect();
+    const rb = pet.restBounds();
+    const center = r.left + (rb.x + rb.w / 2) * pet.scale;
+    const box = el.getBoundingClientRect().width;
+    el.style.left = Math.max(8, Math.min(center - box / 2, window.innerWidth - box - 8)) + 'px';
+  }
+
+  // The CSS `bottom` that parks a panel just above the buddy's clear line,
+  // so it grows UPWARD into the window's reserved headroom.
+  function aboveBuddyBottomCss(gap) {
+    const r = wrap.getBoundingClientRect();
+    const clearTopCss = r.top + SPRITE_CLEAR_UNIT * pet.scale;
+    return (window.innerHeight - clearTopCss + gap) + 'px';
+  }
+
+  function positionPopover() {
+    placeCenteredOnBuddy(popEl, Math.min(300, window.innerWidth - 16));
+    popEl.style.bottom = aboveBuddyBottomCss(10);
+  }
+
+  function setPopover(open) {
+    if (popEl.hidden === !open) return;
+    popEl.hidden = !open;
+    if (open) { closeAsk(); positionPopover(); renderPopover(); btnsEl.hidden = true; }
+    else SETTINGS_ROWS.forEach((r) => { r.hidden = true; }); // reopen on the inbox
+    updateBubble(true);
+    reportBounds();
+  }
+  // ages tick in place — never a full DOM rebuild, which could swallow a
+  // click landing mid-press
+  function updateAges() {
+    if (popEl.hidden) return;
+    const now = Date.now();
+    popEl.querySelectorAll('.age[data-at]').forEach((el) => { el.textContent = fmtAge(now - Number(el.dataset.at)); });
+    popEl.querySelectorAll('.age[data-due]').forEach((el) => { el.textContent = relDue(Number(el.dataset.due), now); });
+    if (inbox) {
+      const fs = feedStatus(inbox, now);
+      if (!inbox.feed_error) popFeed.textContent = fs.text;
+    }
+  }
+  setInterval(updateAges, 1000);
+  window.addEventListener('blur', () => { setPopover(false); closeAsk(); });
+
+  // --- speech bubble: the one thing that needs you, readable with zero
+  //     clicks. Rebuilt only when WHAT it is about changes; the time text
+  //     updates in place so a click is never lost to a rebuild. ---
+  let bubKey = '';
+  bubEl.addEventListener('click', () => {
+    const it = derived && derived.top;
+    if (it) openItem(it);
+  });
+  function bubbleText(d, now) {
+    const it = d.top;
+    if (d.state === 'clock') {
+      const when = it.due_ms == null ? '' : (now < it.due_ms ? 'starts ' + relDue(it.due_ms, now) : 'started ' + fmtAge(now - it.due_ms) + ' ago');
+      return { title: it.title || 'Reminder', detail: [when, it.who].filter(Boolean).join(' · ') };
+    }
+    if (d.state === 'package') return { title: 'Special delivery', detail: it.title || 'Something from Claude' };
+    const more = d.count > 1 ? `  (+${d.count - 1} more)` : '';
+    return { title: (it.who || sourceLabel(it) || 'Waiting on you') + more, detail: it.title || '' };
+  }
+  function updateBubble(force = false) {
+    const d = derived;
+    const show = !!(d && d.top) && popEl.hidden && askEl.hidden
+      && (d.state === 'needs_input' || d.state === 'clock' || d.state === 'package');
+    if (!show) {
+      if (!bubEl.hidden) { bubEl.hidden = true; bubKey = ''; reportBounds(); }
+      return;
+    }
+    const now = Date.now();
+    const { title, detail } = bubbleText(d, now);
+    const key = `${d.state}|${d.top.id}|${d.count}|${mode}|${title}`;
+    if (!force && key === bubKey && !bubEl.hidden) {
+      const dd = bubEl.querySelector('.b-detail');
+      if (dd && dd.textContent !== detail) dd.textContent = detail;
+      return;
+    }
+    bubKey = key;
+    btnsEl.hidden = true; // the bubble owns the spot by the buddy
+    bubEl.hidden = false;
+    bubEl.classList.toggle('calm', d.state === 'package');
+    bubEl.textContent = '';
+    const t = document.createElement('div');
+    t.className = 'b-title';
+    t.textContent = title;
+    const dd = document.createElement('div');
+    dd.className = 'b-detail';
+    dd.textContent = detail;
+    bubEl.append(t, dd);
+    const p = d.top.proposal;
+    if (p && p.summary) {
+      const act = document.createElement('div');
+      act.className = 'b-act';
+      const b = document.createElement('button');
+      if (mode === 'doit') {
+        b.className = 'mini doit'; b.textContent = 'Do it';
+        b.onclick = (e) => { e.stopPropagation(); doIt(d.top); };
+      } else {
+        b.className = 'mini'; b.textContent = 'Talk it over';
+        b.onclick = (e) => { e.stopPropagation(); talkOver(d.top); };
+      }
+      const s = document.createElement('span');
+      s.textContent = p.summary;
+      act.append(b, s);
+      bubEl.appendChild(act);
+    }
+    const tail = document.createElement('div');
+    tail.className = 'b-tail';
+    bubEl.appendChild(tail);
+    bubEl.style.top = 'auto';
+    bubEl.style.bottom = aboveBuddyBottomCss(10);
+    bubEl.style.maxWidth = Math.min(320, window.innerWidth - 16) + 'px';
+    placeCenteredOnBuddy(bubEl);
+    reportBounds();
+  }
+
+  // --- Ask Claw'd: the "+" opens one line; Enter hands it to Claude, who
+  //     proposes first. ---
+  function showAsk() {
+    setPopover(false);
+    hideBtns();
+    askEl.hidden = false;
+    askInput.value = '';
+    placeCenteredOnBuddy(askEl, Math.min(300, window.innerWidth - 16));
+    askEl.style.bottom = aboveBuddyBottomCss(10);
+    updateBubble();
+    reportBounds();
+    setTimeout(() => askInput.focus(), 0);
+  }
+  function closeAsk() {
+    if (askEl.hidden) return;
+    askEl.hidden = true;
+    updateBubble(true);
+    reportBounds();
+  }
+  askInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closeAsk(); return; }
+    if (e.key !== 'Enter') return;
+    const task = askInput.value.trim();
+    if (!task) return;
+    closeAsk();
+    sendToClaude(
+      'Using the clawd skill, here is a task from Claw’d. Tell me what you plan to do first, '
+      + 'and wait for my OK before sending, posting, or changing anything.\n\nTask: ' + task,
+      'Sent to Claude.');
+    flourish('working', 2500, true);
+  });
+
+  let toastTimer = null;
+  function showToast(text) {
+    clearTimeout(toastTimer);
+    toastEl.textContent = text;
+    toastEl.hidden = false;
+    placeCenteredOnBuddy(toastEl);
+    toastEl.style.bottom = aboveBuddyBottomCss(10);
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, 5000);
+  }
+
+  pet.on('scale', (s) => {
+    wrap.style.width = (160 * s) + 'px';
+    wrap.style.height = (160 * s) + 'px';
+    document.getElementById('size-readout').textContent = s.toFixed(2) + '×';
+    try { localStorage.setItem('petScale', String(s)); } catch {}
+  });
+
+  // --- debug panel (browser demo) ---
+  const btns = document.getElementById('state-buttons');
+  function buildStateButtons() {
+    btns.textContent = '';
+    STATES.forEach((s) => {
+      const b = document.createElement('button');
+      b.textContent = s.replace('_', ' ');
+      b.dataset.state = s;
+      const ph = pet.style.clips[s].placeholderFor;
+      if (ph) { b.classList.add('placeholder'); b.title = 'placeholder: shows ' + ph + ' until drawn'; }
+      b.onclick = () => setState(s);
+      b.classList.toggle('active', s === pet.state);
+      btns.appendChild(b);
+    });
+  }
+  buildStateButtons();
+
+  function setState(s, detail = null) {
+    pet.setState(s, detail);
+  }
+  pet.on('state', ({ state }) => {
+    [...btns.children].forEach((b) => b.classList.toggle('active', b.dataset.state === state));
+  });
+
+  document.getElementById('bg-light').onchange = (e) => {
+    document.body.classList.toggle('demo-light', e.target.checked);
+    document.body.classList.toggle('demo-dark', !e.target.checked);
+  };
+
+  // A browser-demo inbox, shaped exactly like Rust's payload, so the whole
+  // presentation (bubble, popover, voice, timers) can be tried without a
+  // Tauri host or a Claude.
+  function demoInbox() {
+    const now = Date.now();
+    const item = (o) => ({ first_seen_ms: now, updated_ms: now, handed_off: false, at_ms: null, due_ms: null, expires_ms: null,
+      source: '', who: '', title: '', spoken: '', link: '', urgency: 1, resolved: false, rule: '', proposal: null, ...o });
+    return {
+      items: [
+        item({ id: 'demo-vip', kind: 'waiting', source: 'slack', who: 'Priya (VIP)', title: 'Is the Q3 deck final? Need it for 3pm.',
+          spoken: 'Priya asked if the Q3 deck is final. She needs it for three.', urgency: 2, rule: 'vip-slack-unread',
+          link: 'https://app.slack.com/client', first_seen_ms: now - 4 * 60000,
+          proposal: { summary: 'Reply: “Yes, v3 in the team drive is final.”', draft_link: '' } }),
+        item({ id: 'demo-mtg', kind: 'reminder', source: 'gcal', title: 'Design review', due_ms: now + 90 * 1000,
+          link: 'https://meet.google.com/', urgency: 2 }),
+        item({ id: 'demo-later', kind: 'reminder', source: 'gcal', title: '1:1 with Sam', due_ms: now + 75 * 60000 }),
+        item({ id: 'demo-msg', kind: 'message', source: 'slack', who: 'Sam', title: 'Launch moved to Thursday',
+          spoken: 'Sam says the launch moved to Thursday.' }),
+        item({ id: 'demo-digest', kind: 'delivery', source: 'claude', title: 'morning digest', link: 'https://claude.ai/' }),
+      ],
+      last_heard_ms: now - 3 * 60000, quiet_until_ms: null, sweep_minutes: 15, nudge_minutes: 20,
+      feed_error: '', inbox_dir: '(demo)', http_ok: false,
+    };
+  }
+  document.getElementById('demo-inbox').onclick = () => { inbox = demoInbox(); tick(); renderPopover(); };
+  document.getElementById('demo-clear').onclick = () => {
+    inbox = { ...(inbox || demoInbox()), items: [] }; userCleared = true; tick(); renderPopover();
+  };
+
+  // --- resize: + / − keys while the pet window is focused (click it first);
+  //     0 resets to the default size ---
+  const DEFAULT_SCALE = 1.75;
+  function resizeTo(next) {
+    pet.setScale(next);
+    if (IS_TAURI) {
+      invoke('set_pet_scale', { scale: pet.scale });
+      reportBounds();
+    }
+  }
+
+  // --- keyboard: +/−/0 resize; q quits the desktop pet. Never while typing
+  //     in the Ask box: those keys are words there. ---
+  document.addEventListener('keydown', (e) => {
+    if (e.target && e.target.closest && e.target.closest('input, textarea')) return;
+    const n = parseInt(e.key, 10);
+    if (e.key === '0') resizeTo(DEFAULT_SCALE);
+    else if (!IS_TAURI && n >= 1 && n <= STATES.length) setState(STATES[n - 1]);
+    else if (e.key === '+' || e.key === '=') resizeTo(pet.scale * 1.15);
+    else if (e.key === '-' || e.key === '_') resizeTo(pet.scale / 1.15);
+    else if (e.key === 'd' && !IS_TAURI) {
+      const dbg = document.getElementById('debug');
+      dbg.style.display = dbg.style.display === 'grid' ? 'none' : 'grid';
+    } else if (e.key === 'r' && !IS_TAURI) location.reload();
+    else if (e.key === 'q' && IS_TAURI) invoke('quit_app');
+    else if (e.key === 'Escape') { setPopover(false); closeAsk(); }
+  });
+
+  // --- waking: any grab of the buddy ends a nap early ---
+  function onBuddy(e) {
+    if (e.target && e.target.closest && e.target.closest('#popover, #bubble, #petbtns, #askbox, #debug')) return false;
+    const rect = canvas.getBoundingClientRect();
+    const b = pet.opaqueBounds();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    return x >= b.x - HALO && x < b.x + b.w + HALO && y >= b.y - HALO && y < b.y + b.h + HALO;
+  }
+
+  document.addEventListener('pointerdown', (e) => {
+    if (pet.state === 'sleeping' && onBuddy(e)) setState('idle');
+  });
+
+  // a plain click on him: the popover, and a happy wiggle if he is free
+  function clickBuddy() {
+    const opening = popEl.hidden;
+    setPopover(opening);
+    if (opening) flourish('happy_wiggle', 1000);
+  }
+
+  // --- drag: press + >2px movement drags the window (moved by Rust, not
+  //     the OS move loop); a plain click toggles the popover ---
+  if (IS_TAURI) {
+    let down = null, dragging = false;
+    const clear = () => { down = null; dragging = false; };
+    const endDrag = () => { if (dragging) invoke('end_drag'); clear(); };
+    document.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !onBuddy(e)) return;
+      down = { x: e.screenX, y: e.screenY };
+      dragging = false;
+      try { document.body.setPointerCapture(e.pointerId); } catch {}
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (!down || dragging) return;
+      if (!(e.buttons & 1)) { clear(); return; }
+      if (Math.hypot(e.screenX - down.x, e.screenY - down.y) > 2) {
+        dragging = true;
+        const dpr = window.devicePixelRatio || 1;
+        invoke('start_drag', { x: down.x * dpr, y: down.y * dpr });
+      }
+    });
+    document.addEventListener('pointerup', (e) => {
+      if (e.button !== 0) return;
+      if (down && !dragging) clickBuddy();
+      endDrag();
+    });
+    document.addEventListener('pointercancel', endDrag);
+    document.addEventListener('lostpointercapture', endDrag);
+    window.addEventListener('blur', endDrag);
+  } else {
+    document.addEventListener('click', (e) => { if (onBuddy(e)) clickBuddy(); });
+  }
+
+  // Nothing is spoken until the boot wave has handed off: a pet that
+  // announces itself at every launch gets muted by week two.
+  let voiceArmed = false;
+
+  // --- treats: the second round button feeds him ---
+  const popTreats = document.getElementById('pop-treats');
+  const treatLayer = new TreatSprite(pet, wrap);
+  // the body bobs for exactly as long as he is making a noise
+  voice.onSpeaking((on, kind) => {
+    pet.setSpeaking(on);
+    pet.setSquint(on && kind === 'chirp');
+  });
+
+  const PECKISH_MS = 3 * 60 * 60 * 1000;
+  const BITE_MS = 333;
+  const MEAL_MS = 1334;
+  const STRANDED_MS = 3000;
+
+  let feeding = false;
+
+  let treats = { count: 0, lastFedAt: 0 };
+  try {
+    const raw = localStorage.getItem('treats');
+    if (raw) {
+      const t = JSON.parse(raw) || {};
+      treats = { count: Number(t.count) || 0, lastFedAt: Number(t.lastFedAt) || 0 };
+    }
+  } catch {}
+
+  function treatLine() {
+    if (!treats.count) return 'treats: 0';
+    return 'treats: ' + treats.count
+      + (treats.lastFedAt ? ' · last ' + fmtAge(Date.now() - treats.lastFedAt) + ' ago' : '');
+  }
+  function isPeckish() { return Date.now() - treats.lastFedAt > PECKISH_MS; }
+
+  function outroMs(name) {
+    const c = pet.style.clips[name];
+    return c && c.stages ? c.stages.outro.reduce((a, s) => a + s.ms, 0) : 0;
+  }
+
+  function feed() {
+    if (feeding) return;
+    feeding = true;
+    const waking = pet.state === 'sleeping';
+    if (waking) setState('idle');
+    hideBtns();
+    setTimeout(() => {
+      treatLayer.drop();
+      setTimeout(() => setState('eating'), FALL_MS);
+      setTimeout(() => {
+        if (feeding && pet.state !== 'eating') { treatLayer.clear(); feeding = false; }
+      }, FALL_MS + STRANDED_MS);
+    }, waking ? outroMs('sleeping') : 0);
+  }
+
+  pet.on('state', ({ state }) => {
+    if (state !== 'eating') return;
+    setTimeout(() => {
+      treatLayer.clear();
+      if (pet.state !== 'eating') return;
+      voice.chirp(2, 'flat');
+      treats = { count: treats.count + 1, lastFedAt: Date.now() };
+      try { localStorage.setItem('treats', JSON.stringify(treats)); } catch {}
+      treatBtn.classList.remove('peckish');
+      renderPopover();
+    }, BITE_MS);
+    setTimeout(endMeal, MEAL_MS);
+  });
+
+  function endMeal() {
+    feeding = false;
+    if (pet.state !== 'eating') return;
+    applyDerived();
+  }
+
+  // --- idle variety: every so often, while nothing is going on, a little
+  //     something (placeholders until drawn). Rare on purpose: each one
+  //     restarts the nap clock. ---
+  setInterval(() => {
+    if (pet.state !== 'idle' || !derived || derived.state !== 'idle' || Math.random() > 0.4) return;
+    flourish(Math.random() < 0.5 ? 'peek' : 'happy_wiggle', 1500);
+  }, 4 * 60 * 1000);
+
+  // greet the fresh app launch with a wave, then settle into the inbox
+  setState('wave');
+  setTimeout(() => {
+    voiceArmed = true;
+    if (pet.state !== 'wave') return;
+    setState('idle');
+    derived = null; // force the next tick to apply
+    tick();
+  }, 1875);
+
+  setInterval(tick, 1000);
+
+  // Tauri host wiring
+  if (IS_TAURI) {
+    document.body.classList.add('tauri');
+    window.addEventListener('resize', reportBounds);
+    // Rust owns the scale (it restores it from config)
+    invoke('get_pet_scale').then((s) => {
+      pet.setScale(s);
+      reportBounds();
+    });
+
+    const { listen } = window.__TAURI__.event;
+    // Rust's cursor poller is the hover ground truth
+    listen('pet-hover', (e) => {
+      if (e.payload) showNewBtn();
+      else scheduleHideNewBtn();
+    });
+    // listener FIRST, then the snapshot, so a stale snapshot can never
+    // overwrite a raced-in live event
+    let gotLive = false;
+    listen('pet-state', (e) => { gotLive = true; inbox = e.payload; tick(); renderPopover(); })
+      .then(() => invoke('get_pet_state'))
+      .then((p) => { if (p && !gotLive) { inbox = p; tick(); renderPopover(); } });
+  } else {
+    document.body.classList.add('demo-dark');
+    pet._emit('scale', pet.scale);
+  }
+
+  // debug/test handle
+  window.__clawd = {
+    pet, setState, setStyle: setArtStyle, setPopover, renderPopover, feed, treatLayer, voice, setMode,
+    showAsk, tick, derive, demoInbox,
+    get inbox() { return inbox; }, set inbox(p) { inbox = p; tick(); renderPopover(); },
+    get derived() { return derived; }, get treats() { return treats; }, get announced() { return announced; },
+  };
+</script>
+</body>
+</html>
