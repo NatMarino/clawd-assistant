@@ -54,6 +54,10 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          # a tag with a suffix (v0.2.0-beta.1) is a test build: a pre-release,
+          # never the "latest" that SETUP.md and coworkers download
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
           files: dist/*
           generate_release_notes: true
           body: |

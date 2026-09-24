@@ -58,8 +58,24 @@ function withPlaceholders(clips) {
 
 validateClips(OFFICE_CLI, CLI_W, CLI_H);
 validateClips(OFFICE_APP, SPRITE_W, SPRITE_H);
+// Walking left: the walk (drawn facing right) mirrored in the pixel data,
+// so turning round is instant with no squash. Each frame is flipped about
+// the body's centre line: a frame at offset dx and w units wide lands at
+// (body width - dx - w).
+function mirrored(clip, spriteW, cell) {
+  if (!clip || !clip.stages) return clip;
+  const flip = (s) => {
+    const w = s.frame[0].length * (cell / (clip.res || 1));
+    return { ...s, frame: s.frame.map((row) => [...row].reverse().join('')), dx: spriteW * cell - s.dx - w };
+  };
+  const st = clip.stages;
+  return { ...clip, stages: { intro: st.intro.map(flip), loop: st.loop.map(flip), outro: st.outro.map(flip) } };
+}
+
 const CLI_ALL = { ...CLIPS_CLI, ...OFFICE_CLI };
 const APP_ALL = { ...CLIPS, ...OFFICE_APP };
+if (OFFICE_CLI.walk) CLI_ALL.walk_left = mirrored(OFFICE_CLI.walk, CLI_W, 1.5);
+if (OFFICE_APP.walk) APP_ALL.walk_left = mirrored(OFFICE_APP.walk, SPRITE_W, 8);
 
 const UNIT_W = 160;
 

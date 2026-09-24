@@ -860,13 +860,14 @@
   // walking pace: the walk clip says how far its stride carries him (canvas
   // units a second), so his feet never slide; this is only the fallback
   const WALK_UNITS_PER_S = 60;
+  const TURN_MS = 250;              // the front-facing beat between directions
   const between = ([a, b]) => a + Math.random() * (b - a);
 
-  // canvas transform: sunk while tucked, mirrored while walking left
+  // canvas transform: sunk while tucked. (Never mirrored: walking left has
+  // its own frames, walk_left in styles.js, so he never squashes flat.)
   function applyCanvasTransform() {
     const parts = [];
     if (life.tucked) parts.push(`translateY(${TUCK_UNITS * pet.scale}px)`);
-    if (life.facing < 0) parts.push('scaleX(-1)');
     canvas.style.transform = parts.join(' ');
   }
 
@@ -878,7 +879,7 @@
     wrap.style.height = ((on ? FEET_UNIT : 160) * pet.scale) + 'px';
     wrap.style.bottom = on ? (110 + (160 - FEET_UNIT) * pet.scale) + 'px' : '';
     wrap.style.overflow = on ? 'hidden' : '';
-    if (!on) { life.tucked = false; life.facing = 1; }
+    if (!on) life.tucked = false;
     applyCanvasTransform();
     reportBounds();
     reportAnchor();
@@ -956,10 +957,17 @@
   async function walkTo(x, onArrive) {
     const tb = life.tb;
     if (!tb || life.walking) return false;
-    life.facing = x < tb.center_x ? -1 : 1;
-    const release = hold('walk');
-    if (!release) { life.facing = 1; applyCanvasTransform(); return false; }
-    applyCanvasTransform();
+    const dir = x < tb.center_x ? -1 : 1;
+    const name = dir < 0 && pet.style.clips.walk_left ? 'walk_left' : 'walk';
+    // Changing direction: face front for a beat first (his idle frame) so he
+    // turns round rather than snapping from one profile to the other.
+    if (life.facing !== dir && pet.state !== 'idle') {
+      if (!hold('idle')) return false;
+      await sleep(TURN_MS);
+    }
+    const release = hold(name);
+    if (!release) return false;
+    life.facing = dir;
     life.walking = true;
     life.releaseWalk = release;
     life.onArrive = onArrive || null;
@@ -972,8 +980,6 @@
   function finishWalk(arrived) {
     if (!life.walking) return;
     life.walking = false;
-    life.facing = 1;
-    applyCanvasTransform();
     const release = life.releaseWalk;
     const then = life.onArrive;
     life.releaseWalk = null;
@@ -1721,7 +1727,7 @@
       life.hovering = !!e.payload;
       if (e.payload) {
         // hovering the top of his head pops him up to say hi
-        if (life.tucked) { setTuck(false); voice.chirp(null, 'light'); }
+        if (life.tucked) setTuck(false); // (the chirp is for clicks only)
         showNewBtn();
       } else {
         scheduleHideNewBtn();
