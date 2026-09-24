@@ -5,6 +5,7 @@
 // coding Claw'd's, unchanged; the pipeline is new.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod brain;
 mod feed;
 mod state;
 mod taskbar;
@@ -158,6 +159,7 @@ struct AppState {
     /// where his centre and feet really are, measured by the page:
     /// (pet scale, x, y) as physical offsets from the window's top-left
     anchor: Mutex<Option<(f64, f64, f64)>>,
+    brain: Arc<brain::Brain>,
 }
 
 // --- living on the taskbar ---------------------------------------------
@@ -301,6 +303,75 @@ fn load_intro(state: tauri::State<AppState>) -> Option<serde_json::Value> {
     let dir = feed::clawd_dir(&state.cfg.lock_or_recover().feed);
     let text = std::fs::read_to_string(dir.join("intro.json")).ok()?;
     serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
+}
+
+// --- the big brain (brain.rs) -------------------------------------------
+
+fn clawd_dir(state: &AppState) -> PathBuf {
+    feed::clawd_dir(&state.cfg.lock_or_recover().feed)
+}
+
+/// Is there a big brain he can use, and which apps can it reach? A tiny real
+/// run on the smallest model; takes a few seconds.
+#[tauri::command]
+async fn brain_status(state: tauri::State<'_, AppState>, model: String) -> Result<brain::Status, String> {
+    let (b, dir) = (state.brain.clone(), clawd_dir(&state));
+    tauri::async_runtime::spawn_blocking(move || brain::probe(&b, &dir, &model, 90))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Start a run. The skill is always its instructions, plus `extra` for the
+/// job at hand; its lines arrive as "brain" events tagged `job`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn brain_run(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    job: String,
+    prompt: String,
+    extra: String,
+    model: String,
+    mode: String,
+    resume: Option<String>,
+    also_allow: Vec<String>,
+    max_turns: Option<u32>,
+) {
+    let system = if extra.trim().is_empty() { feed::SKILL.to_string() } else { format!("{}
+
+{}", feed::SKILL, extra) };
+    let spec = brain::RunSpec { job, prompt, system, model, mode, resume, also_allow, max_turns: max_turns.unwrap_or(30) };
+    brain::spawn_run(app, state.brain.clone(), clawd_dir(&state), spec);
+}
+
+#[tauri::command]
+fn brain_stop(state: tauri::State<AppState>) {
+    brain::stop(&state.brain);
+}
+
+/// The one-time things only a person can do, in the big brain's own window:
+/// "login", or "apps" (say yes to Gmail, Slack… for it).
+#[tauri::command]
+fn brain_open(state: tauri::State<AppState>, what: String) -> bool {
+    let first = if what == "login" { "/login" } else { "/mcp" };
+    brain::open_window(&clawd_dir(&state), first)
+}
+
+/// prefs.json from the Clawd folder (work hours, digest time…), or null.
+#[tauri::command]
+fn read_prefs(state: tauri::State<AppState>) -> Option<serde_json::Value> {
+    let text = std::fs::read_to_string(clawd_dir(&state).join("prefs.json")).ok()?;
+    serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
+}
+
+/// Items the pet makes itself (a failed run's "can you help me?"), through
+/// the same store as everything Claude sends.
+#[tauri::command]
+fn add_local_items(tx: tauri::State<state::EventSender>, json: String) -> bool {
+    match feed::parse_batch(&json) {
+        Ok(items) => tx.0.lock_or_recover().send(state::PetEvent::Items(items, "local")).is_ok(),
+        Err(_) => false,
+    }
 }
 
 #[tauri::command]
@@ -593,10 +664,12 @@ fn main() {
             drag: Mutex::new(None),
             walk: Mutex::new(None),
             anchor: Mutex::new(None),
+            brain: Arc::new(brain::Brain::default()),
         })
         .invoke_handler(tauri::generate_handler![
             set_opaque_bounds, start_drag, end_drag, set_pet_scale, get_pet_scale, quit_app,
             open_link, ask_claude, taskbar_info, go_to_taskbar, walk_to, stop_walk, report_anchor, save_intro, load_intro,
+            brain_status, brain_run, brain_stop, brain_open, read_prefs, add_local_items,
             state::get_pet_state, state::dismiss_item, state::hand_off_item
         ])
         .setup(move |app| {

@@ -9,6 +9,26 @@ to check. Tick it, or note what happened, and the plan adjusts.
       prompt and no Smart App Control block (Nat, 2026-09-24).
 - [x] **A scheduled task can read Slack and Calendar** (Nat, 2026-09-24).
 
+## Step 0 for v0.2: can he run the big brain himself? (do this first)
+
+On the work laptop, open PowerShell and paste:
+
+```powershell
+$c = Get-ChildItem "$env:USERPROFILE\.local\bin\claude.exe","$env:APPDATA\Claude\claude-code\*\claude.exe","$env:LOCALAPPDATA\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code\*\claude.exe" -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
+$c.FullName
+& $c.FullName -p "Reply with just OK" --output-format stream-json --verbose --max-turns 1 --model claude-haiku-4-5-20251001
+```
+
+- [ ] **A path printed.** The program is there.
+- [ ] **The last line says `"is_error":false` and "OK".** It's logged in and can
+      run. (If it asks you to log in, that's fine: the egg has a **Log me in** button.)
+- [ ] **The first long line lists `mcp_servers`.** It shows which apps the program
+      can see (`connected`) and which need a one-time OK (`needs-auth`, which the
+      egg handles too). Slack and Asana should appear if they're connected at work.
+
+If no path prints, or it errors in a way that isn't about logging in, he falls
+back to SETUP.md (the egg says to paste his setup message into Claude).
+
 ## Still to check
 
 - [ ] **Can a scheduled task write into `C:\Users\<you>\Clawd\inbox`?**

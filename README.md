@@ -14,8 +14,9 @@ the pet that watches Claude Code sessions. Same crab, different job.
 
 ## How it works
 
-Claw'd can't read anything himself, and holds no accounts or passwords. **Your
-own Claude** does the reading, through the connections you've already given it
+Claw'd can't read anything himself, and holds no accounts or passwords. He
+runs **the big brain** (Claude Code, logged in as you) in the background, and
+it does the reading, through the connections you've already given it
 (Slack, Google Calendar, Gmail, Asana, Drive). It checks on a schedule, following
 the [clawd skill](skill/clawd/SKILL.md), and writes what matters into a folder
 Claw'd watches:
@@ -49,10 +50,15 @@ in it is tied to the person who sent it.
 
 ## Using it
 
-- **He starts as an egg.** Once Claude connects him, the egg wobbles and you
-  click to hatch him. He introduces himself, asks what to call you and a few
-  questions about your day, and calls you by name from then on. (The tray's
-  *Start over* puts him back in his egg.)
+- **He starts as an egg.** Click it and he sets himself up: he asks what
+  you'd like his help with, then the big brain (Claude Code, which he runs
+  himself in the background) works out the rest from your connected apps while
+  the egg cracks. You click the last crack to hatch him, and he asks your name
+  and your work besties. (The tray's *Start over* puts him back in his egg.)
+- **His requests chat (+):** ask him anything. He types on his little laptop
+  while the big brain works, and tells you when it's done. In **auto** (the
+  default) he just does it; anything that goes to another person shows you the
+  draft first, with **Send it**.
 - **He lives on your taskbar.** His home is just left of the clock. When nothing
   needs you he tucks in behind the taskbar with his eyes peeking over, looks up
   now and then, and every few minutes takes a short stroll and wanders back.

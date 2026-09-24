@@ -286,12 +286,17 @@ function audioCtx() {
 // wobbles the timing a little, so the same moment never sounds canned.
 //   up     something finished well: a rising run
 //   happy  the big one (celebrating): runs that rise and hop
-//   light  a click, a pat: two or three quick high blips, softer
-//   flat   a small acknowledgement
+//   light    a click, a pat: two quick soft high blips
+//   flat     a small acknowledgement
+//   muffled  from inside the egg: low, soft, through the shell (lowpass), and
+//            rising at the end like a question
+//   excited  from inside the egg, when he's ready to come out
 const CHIRPS = {
   up:    { lift: 1.0,  gap: 0.055, decay: 0.075, level: 0.22, contours: [[0, 0.14, 0.28], [0, 0.1, 0.24, 0.3], [0, 0.18, 0.12, 0.3]] },
   happy: { lift: 1.05, gap: 0.05,  decay: 0.07,  level: 0.22, contours: [[0, 0.16, 0.32, 0.2, 0.4], [0, 0.24, 0.12, 0.36], [0.1, 0, 0.2, 0.3, 0.44]] },
-  light: { lift: 1.4,  gap: 0.045, decay: 0.05,  level: 0.14, contours: [[0, 0.18], [0, 0.12, 0.26], [0.1, 0, 0.2], [0, 0.22, 0.14]] },
+  light: { lift: 1.4,  gap: 0.04,  decay: 0.04,  level: 0.07, contours: [[0, 0.18], [0, 0.22], [0.1, 0.26], [0, 0.14]] },
+  muffled: { lift: 0.8, gap: 0.07, decay: 0.09, level: 0.16, lp: 650, contours: [[0, 0.05, 0.3], [0.05, 0, 0.35], [0, 0.1, 0.05, 0.4]] },
+  excited: { lift: 0.9, gap: 0.05, decay: 0.07, level: 0.18, lp: 700, contours: [[0, 0.2, 0.1, 0.35, 0.25, 0.45], [0.1, 0.3, 0.2, 0.4, 0.5]] },
   flat:  { lift: 1.0,  gap: 0.055, decay: 0.075, level: 0.22, contours: [[0, 0.07], [0.07, 0], [0, 0.07, 0]] },
 };
 
@@ -307,13 +312,13 @@ function chirp(count, shape = 'up') {
   // follows the voice pitch, so the chirp belongs to the same character
   const base = 300 * Math.max(0.6, Number(settings.pitch) || 1) * mood.lift;
   const peak = Math.max(0, Math.min(1, Number(settings.volume))) * mood.level;
-  let t = ctx.currentTime + 0.01;
+  let t = ctx.currentTime + 0.002; // no lead-in: a click should sound on the click
   for (let i = 0; i < n; i++) {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 2600;
+    lp.frequency.value = mood.lp || 2600;
     osc.type = 'triangle';
     const detune = 1 + (Math.random() - 0.5) * 0.04;
     osc.frequency.value = base * (1 + contour[i % contour.length]) * detune;
@@ -328,6 +333,20 @@ function chirp(count, shape = 'up') {
   speakingFor(Math.round(n * mood.gap * 1000) + 120); // bob along with the blips
   return true;
 }
+
+// Chatter from inside the egg while his bubble says something: a run of
+// muffled blips about as long as the line, so it reads as him mumbling
+// through the shell. (The speech engine can't be muffled, and words would
+// give away that he's not out yet.)
+function babble(text) {
+  const words = String(text || '').split(/\s+/).filter(Boolean).length;
+  const n = Math.max(3, Math.min(12, Math.round(words * 0.8)));
+  return chirp(n, 'muffled');
+}
+
+// Create and wake the audio engine now (from a first pointerdown), so the
+// first click chirp isn't the one that pays for starting it up.
+function warmAudio() { audioCtx(); }
 
 // One "monch": a soft crunch (filtered noise) over a little low thump that
 // drops in pitch, like a mouthful. Timed by the host to each bite frame.
@@ -392,10 +411,11 @@ let lastSpokeAt = 0;
 
 function stop() { Object.values(BACKENDS).forEach((b) => { try { b.stop(); } catch {} }); }
 
-// Say something now, ignoring the gap. Used by the settings Test button and
-// the mode switch, which are answers to a click.
-async function say(text) {
-  if (!text) return false;
+// Say something now, ignoring the gap: his answers to a click, and his
+// first words. Silent when his voice is off, unless `force` (the settings
+// Test and voice-pick buttons, which are about hearing him).
+async function say(text, { force = false } = {}) {
+  if (!text || (!settings.enabled && !force)) return false;
   lastSpokeAt = Date.now();
   const b = await backend();
   try { b.speak(text); return true; } catch (err) { console.warn('speak failed', err); return false; }
@@ -425,6 +445,6 @@ function isSpeaking() {
 }
 
 export {
-  announce, canAnnounce, isSpeaking, setName, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
+  announce, canAnnounce, isSpeaking, setName, babble, warmAudio, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
   lineForItem, sanitise, systemBackend, DEFAULTS, LIMITS,
 };

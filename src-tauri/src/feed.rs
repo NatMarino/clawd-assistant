@@ -112,7 +112,7 @@ pub fn parse_batch(text: &str) -> Result<Vec<Item>, String> {
     Ok(items)
 }
 
-const SKILL: &str = include_str!("../../skill/clawd/SKILL.md");
+pub const SKILL: &str = include_str!("../../skill/clawd/SKILL.md");
 
 const README: &str = "\
 This folder is how Claude talks to Claw'd, the desktop assistant pet.

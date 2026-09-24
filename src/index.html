@@ -73,7 +73,7 @@
     background: #f2c14e; color: #3b2a00;
   }
   #popover .mode-badge[hidden] { display: none; }
-  /* how fresh Claude's last look is; turns amber when it is stale */
+  /* how fresh the big brain's last look is; turns amber when it is stale */
   #popover .pop-feed { color: #b9b2ab; font-style: italic; font-size: 11px; margin: -2px 0 6px; }
   #popover .pop-feed.warn { color: #e0a36b; font-style: normal; }
   #popover .pop-quiet { color: #b9b2ab; font-style: italic; font-size: 11px; margin: -2px 0 6px; }
@@ -145,14 +145,20 @@
   }
   #bubble.calm .b-tail { border-top-color: #9ab98f; }
 
-  /* Ask Claw'd: one line, straight to Claude */
+  /* his requests chat: a little thread above him */
   #askbox {
     position: fixed; box-sizing: border-box;
     background: rgba(22, 22, 27, .96); color: #e6e0da;
     border: 1px solid #e89478; border-radius: 12px;
-    padding: 8px 10px; font-size: 12px;
+    padding: 8px 10px; font-size: 13px;
     box-shadow: 0 4px 18px rgba(0,0,0,.4);
   }
+  #askbox .ask-log { max-height: 230px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+  #askbox .msg { max-width: 88%; padding: 6px 9px; border-radius: 10px; line-height: 1.35; white-space: pre-wrap; word-break: break-word; }
+  #askbox .msg.him { background: #2c2c34; align-self: flex-start; border-bottom-left-radius: 3px; }
+  #askbox .msg.you { background: #c1694f; color: #fff3ea; align-self: flex-end; border-bottom-right-radius: 3px; }
+  #askbox .msg.typing { color: #b9b2ab; letter-spacing: 2px; }
+  #askbox .msg-actions { display: flex; gap: 6px; }
   #askbox input {
     width: 100%; box-sizing: border-box; font: inherit; font-size: 14px;
     background: #2a2a31; color: #f1ebe5; border: 1px solid #555; border-radius: 8px;
@@ -160,6 +166,9 @@
   }
   #askbox input:focus { border-color: #e89478; }
   #askbox .ask-hint { color: #8a857f; font-size: 11px; margin-top: 5px; }
+  body.panels-light #askbox .msg.him { background: #ece6df; }
+  .mini.go { background: #c1694f; color: #fff3ea; border-color: #c1694f; font-weight: 600; }
+  .mini.go:hover { background: #d27a60; }
 
   /* getting to know you: his question, your answer */
   #chat {
@@ -169,7 +178,20 @@
     padding: 10px 12px; font-size: 13px;
     box-shadow: 0 4px 18px rgba(0,0,0,.4);
   }
-  #chat .chat-q { font-size: 14px; line-height: 1.35; margin-bottom: 8px; }
+  #chat .chat-q { font-size: 14px; line-height: 1.35; margin-bottom: 6px; font-weight: 600; }
+  #chat .chat-sub { color: #b9b2ab; line-height: 1.35; margin-bottom: 8px; }
+  #chat .chat-sub[hidden], #chat .chat-chips[hidden], #chat input[hidden], #chat #chat-hint[hidden] { display: none; }
+  #chat .chat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  #chat .chip {
+    font: inherit; font-size: 12px; cursor: pointer; border-radius: 14px; padding: 4px 10px;
+    background: #2c2c34; color: #e6e0da; border: 1px solid #555;
+  }
+  #chat .chip.on { background: #9ab98f; color: #1d2a18; border-color: #9ab98f; }
+  #chat #chat-btns { display: flex; gap: 6px; margin-left: auto; }
+  /* inside the egg: the words come through the shell, softer */
+  #chat.muffled { border-style: dashed; }
+  #chat.muffled .chat-q { font-style: italic; font-weight: 500; }
+  body.panels-light #chat .chip { background: #ece6df; color: #3b3630; border-color: #c9beb4; }
   #chat input {
     width: 100%; box-sizing: border-box; font: inherit; font-size: 14px;
     background: #2a2a31; color: #f1ebe5; border: 1px solid #555; border-radius: 8px;
@@ -181,7 +203,7 @@
   body.panels-light #chat { background: rgba(247, 244, 240, .97); color: #3b3630; border-color: #7f9f73; }
   body.panels-light #chat input { background: #fff; color: #3b3630; border-color: #c9beb4; }
 
-  /* a passing word after a click ("Sent to Claude"); never clickable */
+  /* a passing word from him; never clickable */
   #toast {
     position: fixed; box-sizing: border-box; pointer-events: none;
     background: rgba(22, 22, 27, .96); color: #e6e0da;
@@ -283,15 +305,15 @@
 <div id="popover" hidden>
   <div class="pop-head">
     <span id="pop-count"></span>
-    <span id="pop-mode" class="mode-badge" hidden>do it mode</span>
+    <span id="pop-mode" class="mode-badge" hidden>ask me first</span>
     <button id="gearbtn" class="gear round-btn" title="settings">&#9881;&#xFE0E;</button>
   </div>
   <div id="pop-feed" class="pop-feed" hidden></div>
   <div id="pop-treats" class="pop-quiet"></div>
   <div id="mode-row" class="theme-row" hidden>
     <span class="lbl">mode:</span>
-    <button data-mode="propose" title="Claude suggests; nothing happens without you">propose</button>
-    <button data-mode="doit" class="doit" title="Adds a Do it button to Claude's ideas. Each press hands one idea to Claude to carry out.">do it</button>
+    <button data-mode="auto" title="When you ask me to do something, I do it right away (anything to another person still waits for your OK)">auto</button>
+    <button data-mode="ask" title="I show you my plan first and wait for your go-ahead">ask me first</button>
   </div>
   <div id="theme-row" class="theme-row" hidden>
     <span class="lbl">theme:</span>
@@ -333,18 +355,21 @@
 </div>
 <div id="bubble" hidden></div>
 <div id="askbox" hidden>
-  <input id="ask-input" type="text" maxlength="600" autocomplete="off" spellcheck="true"
-         placeholder="Tell me what you need… (Enter sends, Esc closes)">
-  <div class="ask-hint">I’ll ask Claude, and it’ll show you the plan first. Nothing gets sent without your OK.</div>
+  <div id="ask-log" class="ask-log"></div>
+  <input id="ask-input" type="text" maxlength="1000" autocomplete="off" spellcheck="true"
+         placeholder="Tell me what you need…">
+  <div class="ask-hint">Enter sends. Anything that goes to another person waits for your OK.</div>
 </div>
 <div id="chat" hidden>
   <div id="chat-q" class="chat-q"></div>
+  <div id="chat-sub" class="chat-sub" hidden></div>
+  <div id="chat-chips" class="chat-chips" hidden></div>
   <input id="chat-input" type="text" maxlength="300" autocomplete="off" spellcheck="true">
-  <div class="chat-row"><span>Enter to answer</span><button id="chat-skip" class="mini">Skip</button></div>
+  <div class="chat-row"><span id="chat-hint">Enter to answer</span><span id="chat-btns"></span></div>
 </div>
 <div id="toast" hidden></div>
 <div id="petbtns" hidden>
-  <div id="newbtn" class="round-btn" title="Ask Claw'd">+</div>
+  <div id="newbtn" class="round-btn" title="Ask me something">+</div>
   <div id="treatbtn" class="round-btn" title="Give Claw'd a treat">
     <svg viewBox="0 0 6 6" width="12" height="12" shape-rendering="crispEdges" aria-hidden="true" focusable="false">
       <path fill="currentColor" fill-rule="evenodd"
@@ -368,9 +393,12 @@
   import { TreatSprite, FALL_MS } from './treats.js';
   import * as voice from './voice.js';
   import { HATCH_MS } from './sprites-egg.js';
+  import { createBrain, MODELS, spokenLine, readSummary, readStage, describeSend } from './brain.js';
 
   const IS_TAURI = !!window.__TAURI__;
   const invoke = IS_TAURI ? window.__TAURI__.core.invoke : null;
+  // the big brain: Claude Code, run by him in the background (brain.js)
+  const brain = IS_TAURI ? createBrain(invoke, window.__TAURI__.event.listen) : null;
 
   // art style (app mascot / CLI mascot): persisted like the panel theme.
   // The assistant defaults to the CLI buddy: it is the skin the animation
@@ -554,25 +582,25 @@
     b.onclick = (e) => { e.stopPropagation(); setPanelTheme(b.dataset.theme); };
   });
 
-  // --- mode: Propose (the default) or Do it. Do it only ADDS a button to
-  //     Claude's ideas; each press is still one deliberate click on one
-  //     idea. Always starts as Propose on a fresh install. He wears a hard
-  //     hat while it is on, so the mode can never be forgotten. ---
-  let mode = 'propose';
-  try { mode = localStorage.getItem('mode') === 'doit' ? 'doit' : 'propose'; } catch {}
+  // --- mode: auto (the default): when you ask him to do something he does
+  //     it right away; anything that goes to another person still waits for
+  //     your tap. "Ask me first": he shows the plan and waits. ---
+  let mode = 'auto';
+  try { mode = localStorage.getItem('mode2') === 'ask' ? 'ask' : 'auto'; } catch {}
   function syncModeButtons() {
     modeRow.querySelectorAll('button[data-mode]').forEach((b) => {
       b.classList.toggle('active', mode === b.dataset.mode);
     });
-    popMode.hidden = mode !== 'doit';
-    pet.setAccessory(mode === 'doit' ? 'hardhat' : null);
+    popMode.hidden = mode !== 'ask';
+    pet.setAccessory(null);
   }
   function setMode(m) {
     if (m === mode) return;
     mode = m;
-    try { localStorage.setItem('mode', m); } catch {}
+    try { localStorage.setItem('mode2', m); } catch {}
     syncModeButtons();
-    voice.say(m === 'doit' ? 'Hard hat on! I’ll do things when you tell me to.' : 'Hard hat off. I’ll just suggest things.');
+    voice.say(m === 'auto' ? 'OK! Auto mode is on. When you ask me to do something, I’ll do it right away.'
+      : 'OK! I’ll check with you before I do things.');
     renderPopover();
     updateBubble(true);
   }
@@ -637,7 +665,7 @@
   }
   document.getElementById('voice-test').onclick = (e) => {
     e.stopPropagation();
-    voice.say(sampleLine());
+    voice.say(sampleLine(), { force: true });
   };
 
   // --- voice picker: one button per installed English voice, built ONCE ---
@@ -662,7 +690,7 @@
         e.stopPropagation();
         voice.set({ voiceName: v.name });
         syncVoicePick();
-        voice.say(sampleLine());
+        voice.say(sampleLine(), { force: true });
       };
       voicePickRow.appendChild(b);
     });
@@ -688,7 +716,7 @@
       e.stopPropagation();
       voice.nudge(b.dataset.tone, parseFloat(b.dataset.step));
       syncTone();
-      voice.say(sampleLine());
+      voice.say(sampleLine(), { force: true });
     };
   });
 
@@ -766,19 +794,19 @@
   function feedStatus(p, now) {
     if (!p) return { stale: false, text: '' };
     if (p.last_heard_ms == null) {
-      return { stale: true, text: 'I haven’t heard from Claude yet. Let’s finish setting me up (SETUP.md).' };
+      return { stale: true, text: 'I haven’t heard from the big brain yet.' };
     }
     const gap = now - p.last_heard_ms;
     const quiet = p.quiet_until_ms && now < p.quiet_until_ms;
-    if (quiet) return { stale: false, text: `resting until ${fmtClock(p.quiet_until_ms)} · Claude checked ${fmtAge(gap)} ago` };
+    if (quiet) return { stale: false, text: `resting until ${fmtClock(p.quiet_until_ms)} · the big brain checked ${fmtAge(gap)} ago` };
     const limit = 2 * Math.max(1, p.sweep_minutes) * 60000 + 60000;
-    if (gap > limit) return { stale: true, text: `I haven’t heard from Claude in ${fmtAge(gap)}` };
-    return { stale: false, text: `Claude checked ${fmtAge(gap)} ago` };
+    if (gap > limit) return { stale: true, text: `I haven’t heard from the big brain in ${fmtAge(gap)}` };
+    return { stale: false, text: `The big brain checked ${fmtAge(gap)} ago` };
   }
 
   function derive(p, now) {
-    // before he hatches: an egg, which wobbles once Claude has connected
-    if (!hatched) return { state: p && p.last_heard_ms != null ? 'egg_wobble' : 'egg', count: 0 };
+    // before he hatches: an egg, which cracks as setup goes (eggState)
+    if (!hatched) return { state: eggState(), count: 0 };
     if (!p) return { state: IS_TAURI ? 'sleeping' : 'idle' };
     const att = attentionList(p, now);
     if (att.length) {
@@ -1075,33 +1103,55 @@
   }
 
   // ======================================================================
-  // Hatching, and getting to know you. Until Claude has checked in he is an
-  // egg; once it has, the egg wobbles and a click hatches him. Then he asks
-  // a few questions out loud (answers typed into his chat bubble for now,
-  // voice in v0.3), remembers your name, and writes what he learned to
-  // Clawd\intro.json for Claude to turn into prefs.json.
+  // Onboarding: the egg, setup inside him, hatching, his first words.
+  // The script is Nat's (docs: the onboarding walkthrough in the plan):
+  //   A  an egg by the clock, still and silent
+  //   B  click: a muffled questioning chirp, "It seems cramped in here…"
+  //   C  [Let's get started]: can he reach the big brain? (log in / say yes
+  //      to its apps / fall back to pasting a setup message into Claude)
+  //   D  silent setup chat in his bubble: what would you like my help with?
+  //      then the big brain sets him up, and the egg cracks with each stage
+  //   E  fully cracked: "I think I'm ready… Click me!"
+  //   F  your click hatches him: hello, your name, your work besties
+  //   G  what the big brain found out
+  //   H  "Yay! I'm going to go get settled in…", then his first check
+  // Until he hatches, everything he says is text in his bubble plus muffled
+  // chatter: his words only come out once he's out of the shell.
   // ======================================================================
   const chatQ = document.getElementById('chat-q');
+  const chatSub = document.getElementById('chat-sub');
+  const chatChips = document.getElementById('chat-chips');
   const chatInput = document.getElementById('chat-input');
-  const chatSkip = document.getElementById('chat-skip');
+  const chatBtns = document.getElementById('chat-btns');
+  const chatHint = document.getElementById('chat-hint');
 
-  const QUESTIONS = [
-    { key: 'name', ask: 'Hi! I’m Claw’d. I just hatched! What should I call you?', ph: 'Your name' },
-    { key: 'vips', ask: 'Nice to meet you, {name}! Who are the people whose messages should never wait? Just tell me their names.', ph: 'e.g. Priya, Stephen', optional: true },
-    { key: 'channels', ask: 'Are there any Slack channels where you’d like me to tell you the news?', ph: 'e.g. #launch, or skip', optional: true },
-    { key: 'hours', ask: 'When do you usually work?', ph: 'e.g. Mon to Fri, 9 to 5:30' },
-    { key: 'digest', ask: 'Should I give you a rundown of your day every morning? What time?', ph: 'e.g. yes, 8:45, or no' },
-    { key: 'watch', ask: 'Is there anything else you’d like me to keep an eye on for you?', ph: 'e.g. who’s checking into a hotel', optional: true },
-  ];
-  const DONE_LINE = 'Got it, {name}! I’ll tell Claude everything so it can finish setting me up. I’m so happy to meet you!';
+  // setup progress, kept across restarts:
+  //   stage: egg | running | ready | hatched;  crack: 0..3;  summary: {…}
+  let setup = { stage: 'egg', crack: 0, summary: null };
+  try { setup = { ...setup, ...(JSON.parse(localStorage.getItem('setup') || 'null') || {}) }; } catch {}
+  if (hatched) setup.stage = 'hatched';
+  if (setup.stage === 'running') setup.stage = 'egg'; // a setup cut short by a restart starts over
+  const saveSetup = () => { try { localStorage.setItem('setup', JSON.stringify(setup)); } catch {} };
+  let eggChecking = false; // the gentle rock while he looks for the big brain
 
-  let intro = { step: 0, answers: {} };
-  try { intro = JSON.parse(localStorage.getItem('intro') || 'null') || intro; } catch {}
-  const saveIntroProgress = () => { try { localStorage.setItem('intro', JSON.stringify(intro)); } catch {} };
-  const introDone = () => intro.step >= QUESTIONS.length;
-  const fillName = (s) => s.replace(/\{name\}/g, userName || 'friend');
+  // which egg to show; derive() asks
+  function eggState() {
+    if (setup.stage === 'ready') return 'egg_ready';
+    // set up the other way (a Claude chat followed SETUP.md): he's ready too
+    if (setup.stage === 'egg' && inbox && inbox.last_heard_ms != null && !brainOk) return 'egg_ready';
+    if (setup.crack >= 3) return 'egg_ready';
+    if (setup.crack === 2) return 'egg_crack2';
+    if (setup.stage === 'running') return 'egg_crack1';
+    return eggChecking ? 'egg_rock' : 'egg';
+  }
 
-  // "call me Nat" / "I'm Nat." / "my name is nat" -> "Nat"
+  // whether the big brain has ever worked here (setup inside him, and his
+  // own timer, depend on it)
+  let brainOk = false;
+  try { brainOk = localStorage.getItem('brainOk') === '1'; } catch {}
+  const setBrainOk = (v) => { brainOk = v; try { localStorage.setItem('brainOk', v ? '1' : '0'); } catch {} };
+
+  // "call me Nat!" / "I'm Nat." / "my name is nat" -> "Nat"
   function cleanName(raw) {
     let n = String(raw || '').trim()
       .replace(/^(you can |please )?(call me|i'?m|i am|my name is|it'?s|name'?s)\s+/i, '')
@@ -1116,28 +1166,102 @@
     voice.setName(userName);
   }
 
+  // --- his bubble as a little form: a question, chips, a text box, buttons.
+  //     Resolves with { button, chips, text }, or null if closed. ---
+  let panelResolve = null;
   function placeChat() {
-    placeCenteredOnBuddy(chatEl, Math.min(320, window.innerWidth - 16));
+    placeCenteredOnBuddy(chatEl, Math.min(330, window.innerWidth - 16));
     chatEl.style.bottom = aboveBuddyBottomCss(10);
   }
-
-  function askCurrent() {
-    const q = QUESTIONS[intro.step];
-    if (!q) return;
-    setPopover(false);
-    closeAsk();
-    chatEl.hidden = false;
-    chatQ.textContent = fillName(q.ask);
-    chatInput.value = '';
-    chatInput.placeholder = q.ph;
-    chatSkip.hidden = !q.optional;
-    placeChat();
-    updateBubble(true);
-    reportBounds();
-    voice.say(fillName(q.ask));
-    setTimeout(() => chatInput.focus(), 0);
+  function panel({ title, sub = '', chips = null, multi = false, other = false, input = false,
+    placeholder = '', buttons = [], skip = false, muffled = false, speak = null } = {}) {
+    return new Promise((resolve) => {
+      if (panelResolve) panelResolve(null);
+      panelResolve = resolve;
+      setPopover(false);
+      closeAsk();
+      chatEl.hidden = false;
+      chatEl.classList.toggle('muffled', !!muffled);
+      chatQ.textContent = title;
+      chatSub.textContent = sub;
+      chatSub.hidden = !sub;
+      // chips: tap to pick (several, if multi)
+      chatChips.textContent = '';
+      const picked = new Set();
+      let otherOn = false;
+      for (const c of chips || []) {
+        const b = document.createElement('button');
+        b.className = 'chip';
+        b.textContent = c;
+        b.onclick = (e) => {
+          e.stopPropagation();
+          if (!multi) { picked.clear(); chatChips.querySelectorAll('.chip').forEach((x) => x.classList.remove('on')); }
+          if (picked.has(c)) { picked.delete(c); b.classList.remove('on'); } else { picked.add(c); b.classList.add('on'); }
+        };
+        chatChips.appendChild(b);
+      }
+      if (other) {
+        const b = document.createElement('button');
+        b.className = 'chip';
+        b.textContent = 'Something else…';
+        b.onclick = (e) => {
+          e.stopPropagation();
+          otherOn = !otherOn;
+          b.classList.toggle('on', otherOn);
+          chatInput.hidden = !otherOn;
+          if (otherOn) setTimeout(() => chatInput.focus(), 0);
+          placeChat(); reportBounds();
+        };
+        chatChips.appendChild(b);
+      }
+      chatChips.hidden = !(chips || other);
+      chatInput.hidden = !input;
+      chatInput.value = '';
+      chatInput.placeholder = placeholder;
+      chatHint.hidden = !input;
+      const answer = (button) => {
+        const text = chatInput.value.trim();
+        const all = [...picked];
+        if (other && otherOn && text) all.push('Something else: ' + text);
+        finishPanel({ button, chips: all, text });
+      };
+      chatBtns.textContent = '';
+      const list = [...buttons];
+      if (skip) list.push({ label: 'Skip', skip: true });
+      for (const bt of list) {
+        const b = document.createElement('button');
+        b.className = 'mini' + (bt.primary ? ' go' : '');
+        b.textContent = bt.label;
+        b.onclick = (e) => { e.stopPropagation(); answer(bt.skip ? 'Skip' : bt.label); };
+        chatBtns.appendChild(b);
+      }
+      chatInput.onkeydown = (e) => {
+        if (e.key === 'Escape') { finishPanel(null); return; }
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        if (!chatInput.value.trim() && !(chips || other)) return;
+        // Enter is always "here is my answer": never Skip, even when Skip is
+        // the only button
+        answer((list.find((b) => b.primary) || { label: 'OK' }).label);
+      };
+      placeChat();
+      updateBubble(true);
+      reportBounds();
+      if (muffled) voice.babble(title + ' ' + sub);
+      else if (speak) voice.say(speak);
+      if (input) setTimeout(() => chatInput.focus(), 0);
+    });
   }
-
+  function finishPanel(ans) {
+    const r = panelResolve;
+    panelResolve = null;
+    closeChat();
+    if (r) r(ans);
+  }
+  // a line with nothing to answer (progress, "I'll wait right here")
+  function note(title, sub = '', muffled = !hatched) {
+    panel({ title, sub, muffled });
+  }
   function closeChat() {
     if (chatEl.hidden) return;
     chatEl.hidden = true;
@@ -1145,80 +1269,335 @@
     reportBounds();
   }
 
-  function answer(text) {
-    const q = QUESTIONS[intro.step];
-    if (!q) return;
-    if (q.key === 'name') {
-      const n = cleanName(text);
-      if (!n) { chatInput.focus(); return; } // his name for you is the one thing he needs
-      setUserName(n);
-      intro.answers.name = n;
-    } else {
-      intro.answers[q.key] = String(text || '').trim();
-    }
-    intro.step++;
-    saveIntroProgress();
-    if (!introDone()) { askCurrent(); return; }
-    closeChat();
-    const record = { version: 1, name: userName, answers: intro.answers, completed_at: new Date().toISOString() };
-    if (IS_TAURI) invoke('save_intro', { json: JSON.stringify(record) });
-    voice.say(fillName(DONE_LINE));
-    flourish('celebrate', 2500, true);
+  // say a line out loud and wait for him to finish it
+  async function sayAndWait(text) {
+    showToast(text); // his words on screen too, whether or not his voice is on
+    await voice.say(text);
+    await sleep(300);
+    for (let t = 0; voice.isSpeaking() && t < 20000; t += 150) await sleep(150);
+    await sleep(250);
   }
 
-  chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); answer(chatInput.value); }
-    else if (e.key === 'Escape') closeChat(); // a pause: clicking him picks up where you left off
-  });
-  chatSkip.addEventListener('click', (e) => { e.stopPropagation(); answer(''); });
+  // what intro.json holds so far, merged and saved for the big brain
+  let introRecord = {};
+  async function saveIntro(patch) {
+    introRecord = { version: 2, ...introRecord, ...patch, updated_at: new Date().toISOString() };
+    if (IS_TAURI) await invoke('save_intro', { json: JSON.stringify(introRecord) });
+  }
 
+  const listNames = (names) => names.length < 2 ? names.join('') : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+
+  // --- B: you click the egg ---
+  let eggAsked = false;
+  let setupBusy = false;
+  function clickEgg() {
+    if (eggState() === 'egg_ready' && setup.stage !== 'running') { voice.chirp(null, 'excited'); hatchNow(); return; }
+    if (setupBusy) { voice.chirp(null, 'muffled'); if (chatEl.hidden && panelResolve === null) note('Hello? Is anybody out there?'); return; }
+    if (eggAsked) {
+      voice.chirp(null, 'muffled');
+      note('Hello? Is anybody out there?');
+      setTimeout(() => { eggAsked = false; }, 4000);
+      return;
+    }
+    eggAsked = true;
+    voice.chirp(null, 'muffled');
+    startSetup();
+  }
+
+  async function startSetup() {
+    const go = await panel({ title: 'It seems cramped in here…', sub: 'Can you help me get out?',
+      buttons: [{ label: 'Let’s get started', primary: true }], muffled: true });
+    if (!go) { eggAsked = false; return; }
+    setupBusy = true;
+    try { await runSetup(); } finally { setupBusy = false; eggAsked = false; }
+  }
+
+  // --- C: can he reach the big brain? ---
+  async function reachBrain() {
+    for (;;) {
+      eggChecking = true; tick();
+      note('Let me see if I can reach the big brain…');
+      let st;
+      try { st = await brain.status(); } catch { st = { found: false, ready: false, problem: 'not-found', servers: [] }; }
+      eggChecking = false; tick();
+      if (st.ready) { setBrainOk(true); return st; }
+      if (!st.found) {
+        const r = await panel({ title: 'Hmm, I can’t reach the big brain from in here.',
+          sub: 'Open the Claude app, start a new chat, and paste my setup message. The big brain will know what to do.',
+          buttons: [{ label: 'Copy my setup message', primary: true }], muffled: true });
+        if (!r) return null;
+        const msg = `Please set up Claw’d for me. Follow SETUP.md in my Clawd folder (${inbox ? inbox.inbox_dir.replace(/[\\/]inbox$/, '') : '%USERPROFILE%\\Clawd'}).`;
+        try { await navigator.clipboard.writeText(msg); } catch {}
+        note('Copied! I’ll wait right here.');
+        return null;
+      }
+      if (st.problem === 'not-logged-in') {
+        const r = await panel({ title: 'The big brain doesn’t know who you are yet.',
+          sub: 'Can you log me in? It only takes a second.', buttons: [{ label: 'Log me in', primary: true }], muffled: true });
+        if (!r) return null;
+        brain.open('login');
+        const done = await panel({ title: 'A window just opened for the big brain.',
+          sub: 'Log in there, then come back and tell me!', buttons: [{ label: 'I’m logged in', primary: true }], muffled: true });
+        if (!done) return null;
+        continue;
+      }
+      const r = await panel({ title: 'The big brain isn’t answering right now.', sub: 'Let’s try again in a minute.',
+        buttons: [{ label: 'Try again', primary: true }], muffled: true });
+      if (!r) return null;
+    }
+  }
+
+  // --- D: what would you like my help with? (silent) ---
+  const USES = [
+    ['Keeping up with messages', 'messages'],
+    ['My meetings and calendar', 'calendar'],
+    ['Reminders for little things', 'reminders'],
+    ['A morning rundown', 'rundown'],
+    ['Tasks and deadlines', 'tasks'],
+  ];
+  async function askUses() {
+    const r = await panel({ title: 'What would you like my help with?', sub: 'Tap all that fit.',
+      chips: USES.map((u) => u[0]), multi: true, other: true, input: false,
+      placeholder: 'Tell me what else…', buttons: [{ label: 'That’s it', primary: true }], muffled: true });
+    if (!r) return null;
+    const uses = r.chips.map((c) => (USES.find((u) => u[0] === c) || [c, c])[1]);
+    const out = { uses };
+    if (uses.includes('messages')) {
+      const m = await panel({ title: 'Which messages matter most?', chips: ['DMs', 'Mentions', 'A few channels'], multi: true,
+        input: true, placeholder: 'Which channels? (optional)', buttons: [{ label: 'OK', primary: true }], muffled: true });
+      if (m) out.messages_focus = { kinds: m.chips, channels: m.text };
+    }
+    if (uses.includes('rundown')) {
+      const t = await panel({ title: 'What time should your rundown be ready?',
+        sub: 'Leave it blank and I’ll have it ready 15 minutes after your day starts.',
+        input: true, placeholder: 'e.g. 8:45', buttons: [{ label: 'OK', primary: true }], muffled: true });
+      if (t && t.text) out.rundown_time = t.text;
+    }
+    return out;
+  }
+
+  // apps the big brain can see but hasn't been given the OK for yet
+  async function okApps(st) {
+    const needs = (st.servers || []).filter((s) => s.status === 'needs-auth').map((s) => s.name);
+    if (!needs.length) return;
+    const r = await panel({ title: `The big brain needs your OK to use ${listNames(needs)}.`,
+      sub: 'A window will open. Pick each app there, choose Authenticate, then come back.',
+      buttons: [{ label: 'Open it', primary: true }, { label: 'Skip for now' }], muffled: true });
+    if (!r || r.button !== 'Open it') return;
+    brain.open('apps');
+    await panel({ title: 'Tell me when you’re done!', buttons: [{ label: 'All done', primary: true }], muffled: true });
+  }
+
+  const STAGE_TEXT = ['', 'Getting to know how you work…', 'Setting up what you picked…', 'Almost ready…'];
+
+  async function runSetup() {
+    if (!brain) return;
+    const st = await reachBrain();
+    if (!st) return;
+    const picks = await askUses();
+    if (!picks) return;
+    await saveIntro(picks);
+    await okApps(st);
+    for (;;) {
+      setup = { stage: 'running', crack: 0, summary: null };
+      saveSetup(); tick();
+      note(STAGE_TEXT[1]);
+      const r = await brain.run({
+        prompt: `Job: setup\nNow: ${new Date().toString()}`,
+        model: MODELS.main,
+        maxTurns: 60,
+        onEvent: (ev) => {
+          if (ev.kind !== 'text') return;
+          const n = readStage(ev.text);
+          if (n > setup.crack) {
+            setup.crack = Math.min(3, n);
+            saveSetup(); tick();
+            voice.chirp(null, 'muffled');
+            note(STAGE_TEXT[setup.crack] || STAGE_TEXT[3]);
+          }
+        },
+      });
+      if (!r.is_error) {
+        setup = { stage: 'ready', crack: 3, summary: readSummary([...r.texts, r.text]) || {} };
+        saveSetup(); tick();
+        break;
+      }
+      const again = await panel({ title: 'Oops, something went wrong while the big brain was setting me up.',
+        buttons: [{ label: 'Try again', primary: true }], muffled: true });
+      if (!again) { setup = { stage: 'egg', crack: 0, summary: null }; saveSetup(); tick(); return; }
+    }
+    // E: ready to hatch
+    voice.chirp(null, 'excited');
+    note('I think I’m ready…', 'Click me!');
+  }
+
+  // --- F: your click hatches him ---
   let hatching = false;
   function hatchNow() {
     if (hatched || hatching) return;
     hatching = true;
+    closeChat();
     bubEl.hidden = true;
     setTuck(false, true);
     const release = hold('hatch', true);
-    // a chirp at each crack, a big one when he's out
-    setTimeout(() => voice.chirp(null, 'light'), 700);
-    setTimeout(() => voice.chirp(null, 'light'), 1200);
-    setTimeout(() => voice.chirp(null, 'happy'), HATCH_MS - 450);
-    setTimeout(() => {
+    setTimeout(() => voice.chirp(null, 'muffled'), 250);
+    setTimeout(() => voice.chirp(null, 'happy'), HATCH_MS - 300);
+    setTimeout(async () => {
       hatched = true;
       hatching = false;
+      setup.stage = 'hatched';
+      saveSetup();
       try { localStorage.setItem('hatched', '1'); } catch {}
       if (release) release();
       derived = null;
       tick();
-      flourish('wave', 1500, true);
-      intro = { step: 0, answers: {} };
-      saveIntroProgress();
-      setTimeout(askCurrent, 600);
+      flourish('wave', 1800, true);
+      await sleep(500);
+      firstWords();
     }, HATCH_MS);
   }
 
-  // the egg can't do much yet: say why, or hatch
-  function clickEgg() {
-    if (derived && derived.state === 'egg_wobble') { hatchNow(); return; }
+  async function firstWords() {
+    await sayAndWait('Hello, I’m Claw’d! I was just born, and I can tell we’re going to be good friends.');
     voice.chirp(null, 'light');
-    showToast('I’m still in my egg! Finish setting me up with Claude first (SETUP.md), then come and hatch me.');
+    await sleep(500);
+    // his name for you: the one thing he has to know
+    let name = '';
+    while (!name) {
+      const r = await panel({ title: 'What’s your name?', input: true, placeholder: 'Your name', speak: 'What’s your name?' });
+      if (!r) { await sleep(800); continue; }
+      name = cleanName(r.text);
+    }
+    setUserName(name);
+    await saveIntro({ name });
+    await sayAndWait(`${name}! I love it. Nice to meet you, ${name}.`);
+    const b = await panel({ title: 'Who are your work besties?', input: true, placeholder: 'e.g. Miguel, Bridgett',
+      skip: true, speak: 'Who are your work besties?' });
+    const besties = b && b.button !== 'Skip' ? b.text : '';
+    if (besties) {
+      await saveIntro({ besties });
+      await sayAndWait('Ooh, they seem really nice!');
+    }
+    if (brainOk) brain.run({ prompt: 'Job: besties', model: MODELS.main, maxTurns: 25 }).then(loadPrefs);
+    // G: what the big brain found out
+    const s = setup.summary || {};
+    if (s.hours) {
+      await sayAndWait(`Here’s what the big brain found out: you work ${s.hours}`
+        + (s.rundown ? `, and I’ll give you a rundown every morning at ${s.rundown}.` : '.'));
+    }
+    for (const m of (s.missing || []).slice(0, 2)) {
+      await sayAndWait(`To help with ${m.use}, I’ll need ${m.app}. You can connect it in the Claude app whenever you like!`);
+    }
+    await sayAndWait('If anything’s wrong, just tell me and I’ll fix it.');
+    // H: settling in
+    await sayAndWait(`Yay! I’m going to go get settled in. Click me whenever you need me, ${name}!`);
+    voice.chirp(null, 'happy');
+    life.calmSince = Date.now() - SETTLE_MS + 8000;
+    await loadPrefs();
+    if (brainOk) firstCheck();
   }
 
-  // Tray "Start over (back to the egg)": for trying the whole first meeting
-  // again. Clears what he knows about you, not the inbox.
+  async function firstCheck() {
+    const r = await runSweep();
+    if (!r || r.is_error) return;
+    await sleep(3000); // let the items land
+    const now = Date.now();
+    const waiting = attentionList(inbox, now).length;
+    const meetings = inbox ? inbox.items.filter((it) => it.kind === 'reminder' && it.source === 'gcal').length : 0;
+    const bits = [];
+    if (meetings) bits.push(`you’ve got ${meetings === 1 ? 'a meeting' : meetings + ' meetings'} coming up`);
+    if (waiting) bits.push(`${waiting === 1 ? 'one thing needs' : waiting + ' things need'} you`);
+    await sayAndWait(bits.length ? `OK, I’m all caught up! ${bits.join(', and ').replace(/^./, (c) => c.toUpperCase())}.`
+      : 'All caught up, and nothing needs you right now. Nice!');
+  }
+
+  // Tray "Start over (back to the egg)": for meeting him again. Forgets your
+  // name and besties, not the inbox.
   function startOver() {
     if (life.walking) stopWalking();
     setTuck(false, true);
     setPopover(false);
     closeAsk();
-    closeChat();
+    finishPanel(null);
     hatched = false;
-    try { localStorage.removeItem('hatched'); localStorage.removeItem('intro'); } catch {}
-    intro = { step: 0, answers: {} };
+    setup = { stage: 'egg', crack: 0, summary: null };
+    saveSetup();
+    try { localStorage.removeItem('hatched'); } catch {}
+    introRecord = {};
+    eggAsked = false;
     setUserName('');
     derived = null;
     tick();
   }
+
+  // ======================================================================
+  // His own timer: checks every sweep_minutes in work hours, the morning
+  // rundown at its time, and a word from him whenever something fails.
+  // (Only when the big brain works here; otherwise Claude's scheduled tasks
+  // do this, as in SETUP.md.)
+  // ======================================================================
+  let prefs = null;
+  async function loadPrefs() {
+    if (!IS_TAURI) return;
+    try { prefs = await invoke('read_prefs'); } catch { prefs = null; }
+  }
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const hm = (s, dflt) => { const m = String(s || dflt).match(/(\d{1,2}):?(\d{2})?/); return m ? Number(m[1]) * 60 + Number(m[2] || 0) : 0; };
+  function inWorkHours(d = new Date()) {
+    const wh = (prefs && prefs.work_hours) || {};
+    const days = wh.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    if (!days.includes(DAYS[d.getDay()])) return false;
+    const now = d.getHours() * 60 + d.getMinutes();
+    return now >= hm(wh.start, '9:00') && now < hm(wh.end, '17:30');
+  }
+  let lastSweepAt = 0;
+  try { lastSweepAt = Number(localStorage.getItem('lastSweepAt')) || 0; } catch {}
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  function helpItem(what, problem) {
+    const why = {
+      'not-logged-in': 'the big brain needs you to log it in again',
+      'rate-limited': 'the big brain has hit its limit for now',
+      'offline': 'I couldn’t reach the internet',
+    }[problem] || 'the big brain ran into a problem';
+    const spoken = what === 'rundown'
+      ? `I wanted to put your morning rundown together, but ${why}. Can you help me?`
+      : `I tried to check your apps, but ${why}. Can you help me?`;
+    const item = { id: `help:${what}:${today()}`, kind: 'waiting', source: 'claude', rule: 'help', urgency: 2,
+      title: what === 'rundown' ? 'I couldn’t make your morning rundown' : 'I couldn’t check your apps', spoken };
+    if (IS_TAURI) invoke('add_local_items', { json: JSON.stringify([item]) });
+  }
+
+  async function runSweep() {
+    if (!brain || brain.busy) return null;
+    lastSweepAt = Date.now();
+    try { localStorage.setItem('lastSweepAt', String(lastSweepAt)); } catch {}
+    const r = await brain.run({ prompt: `Job: sweep\nNow: ${new Date().toString()}`, model: MODELS.quick, maxTurns: 40 });
+    if (r.is_error) helpItem('sweep', r.text);
+    return r;
+  }
+  async function runRundown() {
+    try { localStorage.setItem('rundownOn', today()); } catch {}
+    const r = await brain.run({ prompt: `Job: rundown\nNow: ${new Date().toString()}`, model: MODELS.main, maxTurns: 40 });
+    if (r.is_error) helpItem('rundown', r.text);
+  }
+  function brainTick() {
+    if (!IS_TAURI || !brain || !brainOk || !hatched || !prefs || brain.busy) return;
+    const now = new Date();
+    if (!inWorkHours(now)) return;
+    const mins = now.getHours() * 60 + now.getMinutes();
+    let doneToday = '';
+    try { doneToday = localStorage.getItem('rundownOn') || ''; } catch {}
+    const rundownAt = prefs.rundown_time ? hm(prefs.rundown_time) : 0;
+    if (rundownAt && doneToday !== today() && mins >= rundownAt) { runRundown(); return; }
+    // the rundown never turned up (and nothing else is going on): say so
+    if (rundownAt && doneToday === today() && mins >= rundownAt + 20 && inbox
+        && !inbox.items.some((it) => it.id === `digest:${today()}` || it.id === `help:rundown:${today()}`)) {
+      helpItem('rundown', 'missing');
+    }
+    if (Date.now() - lastSweepAt >= Math.max(10, prefs.sweep_minutes || 30) * 60000) runSweep();
+  }
+  setInterval(brainTick, 60000);
 
   // --- what he says, and when ---
   let speakBusy = false;
@@ -1294,10 +1673,8 @@
     saveAnnounced();
   }
 
-  // --- handing things to Claude. The pet holds no account and does no
-  //     work itself: it opens Claude with the words already written. The
-  //     prompt also goes on the clipboard, in case the app drops the
-  //     prefill (the Phase 0 question). ---
+  // --- acting on an item: Do it (auto) or Talk it over (ask me first) both
+  //     go to the big brain through his requests chat (request, below) ---
   function describe(it) {
     return [
       sourceLabel(it) && `(${sourceLabel(it)})`,
@@ -1306,31 +1683,18 @@
       it.link && `link: ${it.link}`,
     ].filter(Boolean).join(' ');
   }
-  async function sendToClaude(prompt, note) {
-    let copied = false;
-    try { await navigator.clipboard.writeText(prompt); copied = true; } catch {}
-    if (IS_TAURI) invoke('ask_claude', { prompt });
-    showToast(note + (copied ? ' If the message box is empty, press Ctrl+V.' : ''));
-  }
   function talkOver(it) {
     const p = it.proposal || {};
-    sendToClaude(
-      'Using the clawd skill, let’s look at this together. Don’t send or change anything yet.\n\n'
-      + describe(it) + (p.summary ? `\nYour idea was: ${p.summary}` : '')
-      + (p.draft_link ? `\nDraft: ${p.draft_link}` : '') + `\n(clawd item ${it.id})`,
-      'I opened it in Claude.');
+    showAsk();
+    request('What do you think we should do about this?', { about: describe(it) + (p.summary ? `\nYour idea was: ${p.summary}` : ''), plan: true });
   }
   function doIt(it) {
     const p = it.proposal || {};
-    sendToClaude(
-      'Using the clawd skill, carry out this proposal. I approved it by pressing Do it on Claw’d.\n\n'
-      + `Proposal: ${p.summary}\nAbout: ${describe(it)}`
-      + (p.draft_link ? `\nDraft: ${p.draft_link}` : '') + `\n(clawd item ${it.id})`,
-      'I passed it to Claude!');
     if (IS_TAURI) invoke('hand_off_item', { id: it.id });
     it.handed_off = true; // optimistic; Rust confirms on its next publish
-    flourish('working', 3000, true);
     tick();
+    showAsk();
+    request(`Go ahead: ${p.summary}`, { about: describe(it) + `\n(clawd item ${it.id}; resolve it when done)` });
   }
   function tickOff(it) {
     if (IS_TAURI) invoke('dismiss_item', { id: it.id });
@@ -1381,7 +1745,7 @@
       ['Messages', open.filter((it) => it.kind === 'message')],
       ['Deliveries', open.filter((it) => it.kind === 'delivery')],
       ['Notes', open.filter((it) => !(it.kind in KIND_RANK) || it.kind === 'note')],
-      ['With Claude', inbox.items.filter((it) => it.handed_off)],
+      ['With the big brain', inbox.items.filter((it) => it.handed_off)],
     ];
     let any = false;
     for (const [title, list] of groups) {
@@ -1396,7 +1760,7 @@
     if (!any) {
       const e = document.createElement('div');
       e.className = 'empty';
-      e.textContent = 'Nothing yet. I’ll show you whatever Claude finds.';
+      e.textContent = 'Nothing yet. I’ll show you whatever the big brain finds.';
       popItems.appendChild(e);
     }
   }
@@ -1459,15 +1823,15 @@
       txt.title = it.proposal.summary;
       idea.appendChild(txt);
       const b = document.createElement('button');
-      if (mode === 'doit') {
+      if (mode === 'auto') {
         b.className = 'mini doit';
         b.textContent = 'Do it';
-        b.title = 'hand this one idea to Claude to carry out';
+        b.title = 'I’ll do it right away';
         b.onclick = (e) => { e.stopPropagation(); doIt(it); };
       } else {
         b.className = 'mini';
         b.textContent = 'Talk it over';
-        b.title = 'open it in Claude; nothing gets sent';
+        b.title = 'let’s talk it over first; nothing gets sent';
         b.onclick = (e) => { e.stopPropagation(); talkOver(it); };
       }
       idea.appendChild(b);
@@ -1537,28 +1901,15 @@
       const when = it.due_ms == null ? '' : (now < it.due_ms ? 'starts ' + relDue(it.due_ms, now) : 'started ' + fmtAge(now - it.due_ms) + ' ago');
       return { title: `Heads up: ${it.title || 'your reminder'}`, detail: [when, it.who].filter(Boolean).join(' · ') };
     }
-    if (d.state === 'package') return { title: 'I just finished something!', detail: it.title || 'Something from Claude' };
+    if (d.state === 'package') return { title: 'I just finished something!', detail: it.title || 'Something from the big brain' };
     const more = d.count > 1 ? `  (+${d.count - 1} more)` : '';
     const from = it.who || sourceLabel(it);
     return { title: (userName ? `${userName}, I need your help!` : 'I need your help!') + more, detail: (from ? from + ': ' : '') + (it.title || '') };
   }
   function updateBubble(force = false) {
     const d = derived;
-    if (d && d.state === 'egg_wobble' && popEl.hidden && askEl.hidden && chatEl.hidden && !hatching) {
-      if (bubKey === 'egg' && !bubEl.hidden && !force) return;
-      bubKey = 'egg';
-      bubEl.hidden = false;
-      bubEl.classList.add('calm');
-      bubEl.textContent = '';
-      const t = document.createElement('div'); t.className = 'b-title'; t.textContent = 'Something’s moving in here…';
-      const dd = document.createElement('div'); dd.className = 'b-detail'; dd.textContent = 'Click me to hatch me!';
-      const tail = document.createElement('div'); tail.className = 'b-tail';
-      bubEl.append(t, dd, tail);
-      bubEl.style.top = 'auto';
-      bubEl.style.bottom = aboveBuddyBottomCss(10);
-      bubEl.style.maxWidth = Math.min(320, window.innerWidth - 16) + 'px';
-      placeCenteredOnBuddy(bubEl);
-      reportBounds();
+    if (!hatched) {
+      if (!bubEl.hidden) { bubEl.hidden = true; bubKey = ''; reportBounds(); }
       return;
     }
     const show = !!(d && d.top) && popEl.hidden && askEl.hidden && chatEl.hidden
@@ -1592,7 +1943,7 @@
       const act = document.createElement('div');
       act.className = 'b-act';
       const b = document.createElement('button');
-      if (mode === 'doit') {
+      if (mode === 'auto') {
         b.className = 'mini doit'; b.textContent = 'Do it';
         b.onclick = (e) => { e.stopPropagation(); doIt(d.top); };
       } else {
@@ -1614,15 +1965,69 @@
     reportBounds();
   }
 
-  // --- Ask Claw'd: the "+" opens one line; Enter hands it to Claude, who
-  //     proposes first. ---
+  // --- his requests chat (the "+"): you type, he does it with the big
+  //     brain (typing on his little laptop meanwhile) and tells you when
+  //     it's done. Anything going to another person waits for your tap. ---
+  const askLog = document.getElementById('ask-log');
+  let thread = [];
+  try { thread = JSON.parse(localStorage.getItem('thread') || '[]') || []; } catch {}
+  let threadSession = null;
+  let threadAt = 0;
+  let threadActions = null; // buttons under his latest message
+  let threadTyping = false;
+  const saveThread = () => { thread = thread.slice(-50); try { localStorage.setItem('thread', JSON.stringify(thread)); } catch {} };
+
+  function renderThread() {
+    askLog.textContent = '';
+    if (!thread.length) {
+      const e = document.createElement('div');
+      e.className = 'msg him';
+      e.textContent = userName ? `Hi ${userName}! What can I do for you?` : 'Hi! What can I do for you?';
+      askLog.appendChild(e);
+    }
+    for (const m of thread.slice(-20)) {
+      const e = document.createElement('div');
+      e.className = 'msg ' + m.who;
+      e.textContent = m.text;
+      askLog.appendChild(e);
+    }
+    if (threadActions) {
+      const row = document.createElement('div');
+      row.className = 'msg-actions';
+      for (const a of threadActions) {
+        const b = document.createElement('button');
+        b.className = 'mini' + (a.primary ? ' go' : '');
+        b.textContent = a.label;
+        b.onclick = (e) => { e.stopPropagation(); threadActions = null; renderThread(); a.run(); };
+        row.appendChild(b);
+      }
+      askLog.appendChild(row);
+    }
+    if (threadTyping) {
+      const e = document.createElement('div');
+      e.className = 'msg him typing';
+      e.textContent = '…';
+      askLog.appendChild(e);
+    }
+    askLog.scrollTop = askLog.scrollHeight;
+    if (!askEl.hidden) { askEl.style.bottom = aboveBuddyBottomCss(10); reportBounds(); }
+  }
+  function addMsg(who, text, actions = null) {
+    thread.push({ who, text, t: Date.now() });
+    threadActions = actions;
+    saveThread();
+    renderThread();
+  }
+
   function showAsk() {
     setPopover(false);
     hideBtns();
+    finishPanel(null);
     askEl.hidden = false;
     askInput.value = '';
-    placeCenteredOnBuddy(askEl, Math.min(300, window.innerWidth - 16));
-    askEl.style.bottom = aboveBuddyBottomCss(10);
+    askInput.placeholder = 'Tell me what you need…';
+    placeCenteredOnBuddy(askEl, Math.min(340, window.innerWidth - 16));
+    renderThread();
     updateBubble();
     reportBounds();
     setTimeout(() => askInput.focus(), 0);
@@ -1636,15 +2041,79 @@
   askInput.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { closeAsk(); return; }
     if (e.key !== 'Enter') return;
-    const task = askInput.value.trim();
-    if (!task) return;
-    closeAsk();
-    sendToClaude(
-      'Using the clawd skill, here is a task from Claw’d. Tell me what you plan to do first, '
-      + 'and wait for my OK before sending, posting, or changing anything.\n\nTask: ' + task,
-      'Got it! I asked Claude.');
-    flourish('working', 2500, true);
+    const text = askInput.value.trim();
+    if (!text) return;
+    askInput.value = '';
+    askInput.placeholder = 'Tell me what you need…';
+    request(text);
   });
+
+  // the old way, when the big brain can't run here: Claude app, text pasted
+  async function openInClaude(prompt) {
+    try { await navigator.clipboard.writeText(prompt); } catch {}
+    if (IS_TAURI) invoke('ask_claude', { prompt });
+  }
+
+  function errorLine(problem) {
+    if (problem === 'not-logged-in') return 'The big brain needs you to log it in again.';
+    if (problem === 'rate-limited') return 'The big brain needs a little break. Try me again in a bit!';
+    if (problem === 'offline') return 'I can’t reach the internet right now.';
+    return 'Hmm, the big brain couldn’t do that one. Can you try again?';
+  }
+  const firstName = (to) => String(to).split(/[,<@]/)[0].trim().split(/\s+/)[0] || String(to);
+
+  async function request(text, { about = '', plan = mode === 'ask' } = {}) {
+    addMsg('you', text);
+    if (!brain || !brainOk) {
+      await openInClaude(`Using the clawd skill: ${about ? about + '\n\n' : ''}${text}`);
+      addMsg('him', 'I can’t reach the big brain from here, so I opened the Claude app for you. If the box is empty, press Ctrl+V.');
+      return;
+    }
+    await think(`Job: request\nMode: ${plan ? 'ask first' : 'auto'}\nNow: ${new Date().toString()}\n\n${about ? 'About: ' + about + '\n\n' : ''}${text}`, { plan });
+  }
+
+  async function think(prompt, { plan = false, alsoAllow = [], resume = null } = {}) {
+    threadTyping = true;
+    threadActions = null;
+    renderThread();
+    const release = hold('working', true); // typing on his little laptop
+    const session = resume || (Date.now() - threadAt < 30 * 60000 ? threadSession : null);
+    const r = await brain.run({ prompt, model: MODELS.main, mode: plan ? 'plan' : 'auto', resume: session, alsoAllow });
+    if (release) release();
+    threadTyping = false;
+    threadSession = r.session || threadSession;
+    threadAt = Date.now();
+    if (r.is_error) {
+      const line = errorLine(r.text);
+      addMsg('him', line, r.text === 'not-logged-in' ? [{ label: 'Log me in', primary: true, run: () => brain.open('login') }] : null);
+      voice.say(line);
+      return;
+    }
+    const reply = String(r.text || r.texts[r.texts.length - 1] || '').trim() || 'Done!';
+    const sends = (r.denials || []).filter((d) => String(d.tool).startsWith('mcp__'));
+    if (sends.length) {
+      const d = describeSend(sends[0]);
+      const card = `Here’s what I’ll send${d.to ? ' to ' + d.to : ''}:` + (d.subject ? `\n${d.subject}` : '') + (d.body ? `\n\n${d.body}` : '');
+      addMsg('him', card, [
+        { label: 'Send it', primary: true, run: () => think('Yes, send it exactly as drafted.', { resume: threadSession, alsoAllow: [sends[0].tool] }) },
+        { label: 'Change it', run: () => { askInput.placeholder = 'What should I change?'; askInput.focus(); } },
+      ]);
+      voice.say(`Here’s what I’ll send${d.to ? ' to ' + firstName(d.to) : ''}. Should I send it?`);
+      if (askEl.hidden) showAsk();
+      return;
+    }
+    if (plan) {
+      addMsg('him', reply, [
+        { label: 'Go ahead', primary: true, run: () => think('Go ahead.', { resume: threadSession }) },
+        { label: 'Never mind', run: () => addMsg('him', 'OK, never mind!') },
+      ]);
+      voice.say(spokenLine(reply));
+      return;
+    }
+    addMsg('him', reply);
+    voice.say(spokenLine(reply));
+    if (askEl.hidden) showToast(spokenLine(reply));
+  }
 
   let toastTimer = null;
   function showToast(text) {
@@ -1760,16 +2229,18 @@
   }
 
   document.addEventListener('pointerdown', (e) => {
-    if (pet.state === 'sleeping' && onBuddy(e)) setState('idle');
+    if (!onBuddy(e)) return;
+    voice.warmAudio();
+    // a soft happy chirp the instant he's touched (the egg makes its own noises)
+    if (hatched && !hatching) voice.chirp(null, 'light');
+    if (pet.state === 'sleeping') setState('idle');
   });
 
   // a plain click on him: the popover, and a happy wiggle if he is free
   function clickBuddy() {
     if (!hatched) { clickEgg(); return; }
-    if (!introDone() && chatEl.hidden) { askCurrent(); return; } // pick up where we left off
     const opening = popEl.hidden;
     setPopover(opening);
-    voice.chirp(null, 'light'); // a little happy noise every time he is clicked
     if (opening) flourish('happy_wiggle', null);
   }
 
@@ -1913,9 +2384,25 @@
     derived = null; // force the next tick to apply
     tick();
     if (pet.state === 'wave' && derived && derived.state === 'idle') setState('idle');
+    if (hatched) setTimeout(bootHello, 1200);
   }, 1875);
 
   setInterval(tick, 1000);
+
+  // Once hatched: sometimes a short hello when he starts up (never the same
+  // twice in a row, and not outside work hours)
+  async function bootHello() {
+    await loadPrefs();
+    if (prefs && !inWorkHours()) return;
+    if (Math.random() > 0.6) return;
+    const lines = userName ? [`Morning, ${userName}!`, `Hi ${userName}!`, 'I’m back!'] : ['Hi!', 'I’m back!'];
+    let last = '';
+    try { last = localStorage.getItem('lastHello') || ''; } catch {}
+    const pickLine = lines.filter((l) => l !== last)[Math.floor(Math.random() * (lines.length - 1))] || lines[0];
+    try { localStorage.setItem('lastHello', pickLine); } catch {}
+    if (new Date().getHours() >= 12 && pickLine.startsWith('Morning')) return voice.say(`Hi ${userName}!`);
+    voice.say(pickLine);
+  }
 
   // Tauri host wiring
   if (IS_TAURI) {
@@ -1949,7 +2436,8 @@
     });
     refreshTaskbar();
     setInterval(refreshTaskbar, 30000);
-    if (!userName) invoke('load_intro').then((v) => { if (v && v.name && !userName) setUserName(String(v.name)); }); // the taskbar can move, resize or auto-hide
+    invoke('load_intro').then((v) => { if (v) { introRecord = v; if (v.name && !userName) setUserName(String(v.name)); } });
+    loadPrefs(); // the taskbar can move, resize or auto-hide
     // listener FIRST, then the snapshot, so a stale snapshot can never
     // overwrite a raced-in live event
     let gotLive = false;
@@ -1964,7 +2452,7 @@
   // debug/test handle
   window.__clawd = {
     pet, setState, setStyle: setArtStyle, setPopover, renderPopover, feed, treatLayer, voice, setMode,
-    showAsk, tick, derive, demoInbox, life, hatchNow, startOver, askCurrent, get hatched() { return hatched; }, setTuck, walkTo, stroll, peekOnce, refreshTaskbar,
+    showAsk, tick, derive, demoInbox, life, hatchNow, startOver, clickEgg, request, panel, runSweep, get hatched() { return hatched; }, get setup() { return setup; }, setTuck, walkTo, stroll, peekOnce, refreshTaskbar,
     get inbox() { return inbox; }, set inbox(p) { inbox = p; tick(); renderPopover(); },
     get derived() { return derived; }, get treats() { return treats; }, get announced() { return announced; },
   };
