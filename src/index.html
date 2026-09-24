@@ -1259,7 +1259,9 @@
     if (r) r(ans);
   }
   // a line with nothing to answer (progress, "I'll wait right here")
+  let lastNote = null;
   function note(title, sub = '', muffled = !hatched) {
+    lastNote = { title, sub, muffled };
     panel({ title, sub, muffled });
   }
   function closeChat() {
@@ -1292,7 +1294,12 @@
   let setupBusy = false;
   function clickEgg() {
     if (eggState() === 'egg_ready' && setup.stage !== 'running') { voice.chirp(null, 'excited'); hatchNow(); return; }
-    if (setupBusy) { voice.chirp(null, 'muffled'); if (chatEl.hidden && panelResolve === null) note('Hello? Is anybody out there?'); return; }
+    if (setupBusy) {
+      voice.chirp(null, 'muffled');
+      // whatever he's busy with stays up; if its bubble was closed, bring it back
+      if (chatEl.hidden && panelResolve === null && lastNote) note(lastNote.title, lastNote.sub, lastNote.muffled);
+      return;
+    }
     if (eggAsked) {
       voice.chirp(null, 'muffled');
       note('Hello? Is anybody out there?');
@@ -1317,8 +1324,12 @@
     for (;;) {
       eggChecking = true; tick();
       note('Let me see if I can reach the big brain…');
+      const slow = setTimeout(() => {
+        if (lastNote && lastNote.title.startsWith('Let me see')) note('Let me see if I can reach the big brain…', 'This can take a little while the first time.');
+      }, 12000);
       let st;
       try { st = await brain.status(); } catch { st = { found: false, ready: false, problem: 'not-found', servers: [] }; }
+      clearTimeout(slow);
       eggChecking = false; tick();
       if (st.ready) { setBrainOk(true); return st; }
       if (!st.found) {
@@ -2221,7 +2232,9 @@
 
   // --- waking: any grab of the buddy ends a nap early ---
   function onBuddy(e) {
-    if (e.target && e.target.closest && e.target.closest('#popover, #bubble, #petbtns, #askbox, #debug')) return false;
+    // his bubbles sit over the top of his hit area: a click on one is for the
+    // bubble (a button, a text box), never a click on him
+    if (e.target && e.target.closest && e.target.closest('#popover, #bubble, #petbtns, #askbox, #chat, #toast, #debug')) return false;
     const rect = canvas.getBoundingClientRect();
     const b = pet.opaqueBounds();
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
@@ -2374,9 +2387,17 @@
     flourish(Math.random() < 0.5 ? 'peek' : 'happy_wiggle', null);
   }, 4 * 60 * 1000);
 
-  // greet the fresh app launch with a wave, then settle into the inbox
-  setState('wave');
-  setTimeout(() => {
+  // Greet the fresh app launch with a wave, then settle into the inbox. An
+  // egg doesn't wave: before he hatches he boots straight into his egg, so
+  // he's never seen as himself before you've met.
+  if (!hatched) {
+    voiceArmed = true;
+    greeting = false;
+    derived = null;
+    tick();
+    setState(eggState());
+  } else setState('wave');
+  if (hatched) setTimeout(() => {
     voiceArmed = true;
     greeting = false;
     // Whatever arrived during the wave is applied now, always: an ask that

@@ -28,6 +28,25 @@ use crate::PoisonTolerant;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// %APPDATA%\ClawdAssistant\brain.log: one line per check and run (which
+/// program, which model, how it went, any error text), so a problem on a
+/// machine we can't see can be read back. Never the prompts or the replies.
+/// Kept small: over 256 KB it starts again.
+pub fn log(line: &str) {
+    use std::io::Write;
+    let Some(path) = crate::app_data_dir().map(|d| d.join("brain.log")) else { return };
+    if std::fs::metadata(&path).map(|m| m.len() > 256 * 1024).unwrap_or(false) {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let when = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _ = writeln!(f, "{when} {}", line.replace('\n', " / "));
+    }
+}
+
 /// Tools the big brain may never use without a tap, matched on the part of
 /// the tool name after the server ("mcp__claude_ai_Gmail__send_email" ->
 /// "send_email"). Drafting, reading, searching and updating your own things
@@ -303,15 +322,18 @@ pub fn spawn_run(app: AppHandle, brain: Arc<Brain>, dir: PathBuf, spec: RunSpec)
             e
         };
         let Some(exe) = find_claude() else {
+            log(&format!("run {}: no claude.exe found", spec.job));
             emit(fail("not-found".into()));
             return;
         };
+        log(&format!("run {}: start ({}, {}, {})", spec.job, exe.display(), if spec.model.is_empty() { "default" } else { &spec.model }, spec.mode));
         let turn = brain.turn.clone();
         let _turn = turn.lock_or_recover();
         let tools = brain.tools.lock_or_recover().clone();
         let mut child = match command(&exe, &dir, &spec, &tools).spawn() {
             Ok(c) => c,
             Err(e) => {
+                log(&format!("run {}: could not start: {e}", spec.job));
                 emit(fail(format!("could not start: {e}")));
                 return;
             }
@@ -326,6 +348,11 @@ pub fn spawn_run(app: AppHandle, brain: Arc<Brain>, dir: PathBuf, spec: RunSpec)
             for line in BufReader::new(out).lines().map_while(Result::ok) {
                 if let Some(ev) = parse_line(&job, &line, &mut seen_tools) {
                     got_result |= ev.kind == "result";
+                    if ev.kind == "result" {
+                        let denied: Vec<&str> = ev.denials.iter().map(|d| d.tool.as_str()).collect();
+                        log(&format!("run {job}: done error={} denied=[{}]{}", ev.is_error, denied.join(", "),
+                            if ev.is_error { format!(" text: {}", ev.text.chars().take(300).collect::<String>()) } else { String::new() }));
+                    }
                     emit(ev);
                 }
             }
@@ -342,6 +369,7 @@ pub fn spawn_run(app: AppHandle, brain: Arc<Brain>, dir: PathBuf, spec: RunSpec)
         }
         if !got_result {
             let t = err_text.trim();
+            log(&format!("run {job}: ended with no result; stderr: {}", t.chars().take(600).collect::<String>()));
             emit(fail(if t.is_empty() { "stopped".into() } else { classify(t).into() }));
         }
     });
@@ -396,8 +424,10 @@ pub struct Status {
 /// Blocks for up to `secs`; call it off the main thread.
 pub fn probe(brain: &Brain, dir: &Path, model: &str, secs: u64) -> Status {
     let Some(exe) = find_claude() else {
+        log("probe: no claude.exe found (PATH, ~/.local/bin, the Claude app)");
         return Status { found: false, ready: false, problem: "not-found".into(), servers: vec![] };
     };
+    log(&format!("probe: {} ({model})", exe.display()));
     let spec = RunSpec {
         job: "probe".into(),
         prompt: "Reply with just OK".into(),
@@ -410,8 +440,12 @@ pub fn probe(brain: &Brain, dir: &Path, model: &str, secs: u64) -> Status {
     };
     let _turn = brain.turn.lock_or_recover();
     let tools = brain.tools.lock_or_recover().clone();
-    let Ok(mut child) = command(&exe, dir, &spec, &tools).spawn() else {
-        return Status { found: true, ready: false, problem: "failed".into(), servers: vec![] };
+    let mut child = match command(&exe, dir, &spec, &tools).spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            log(&format!("probe: could not start: {e}"));
+            return Status { found: true, ready: false, problem: "failed".into(), servers: vec![] };
+        }
     };
     let (tx, rx) = std::sync::mpsc::channel();
     let out = child.stdout.take();
@@ -454,7 +488,10 @@ pub fn probe(brain: &Brain, dir: &Path, model: &str, secs: u64) -> Status {
             let _ = e.take(8192).read_to_string(&mut err);
         }
         status.problem = if err.trim().is_empty() { "failed".into() } else { classify(&err).into() };
+        log(&format!("probe: no answer; stderr: {}", err.trim().chars().take(600).collect::<String>()));
     }
+    let apps: Vec<String> = status.servers.iter().map(|s| format!("{}={}", s.name, s.status)).collect();
+    log(&format!("probe: ready={} problem={} apps: {}", status.ready, status.problem, apps.join(", ")));
     let _ = child.kill();
     let _ = child.wait();
     status
