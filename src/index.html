@@ -2899,6 +2899,9 @@
     if (pet.state === 'wave' && derived && derived.state === 'idle') setState('idle');
     if (hatched) setTimeout(bootHello, 1200);
     if (hatched) setTimeout(offerTakeOver, 20000);
+    // ...and again now and then: a Cowork setup that stops checking in
+    // shouldn't leave him grey
+    setInterval(offerTakeOver, 30 * 60000);
   }, 1875);
 
   setInterval(tick, 1000);
@@ -2909,12 +2912,23 @@
   // brain himself here? Offer to take over: lighter, and his own chat.
   async function offerTakeOver() {
     if (!IS_TAURI || !brain || brainOk || !hatched) return;
+    // Nobody else is checking in (no Cowork heartbeat for a while, or ever)
+    // and he can run the big brain himself: just take over, quietly. Asking
+    // once a day and then sitting grey helps no one.
+    const nobody = !inbox || feedStatus(inbox, Date.now()).stale;
     let asked = '';
     try { asked = localStorage.getItem('takeOverAsked') || ''; } catch {}
-    if (asked === today()) return;
+    if (asked === today() && !nobody) return;
     let st;
     try { st = await brain.status(); } catch { return; }
     if (!st || !st.ready) return;
+    if (nobody) {
+      plog('taking over: no one else is checking in');
+      setBrainOk(true);
+      await loadPrefs();
+      runSweep();
+      return;
+    }
     try { localStorage.setItem('takeOverAsked', today()); } catch {}
     const r = await panel({ title: 'I can do my own check-ins now!', sub: 'I’d use the big brain myself: lighter on your plan, and you can ask me things right here. Want me to?',
       buttons: [{ label: 'Yes please', primary: true }, { label: 'Not now' }], speak: 'I can do my own check-ins now! Want me to?' });
