@@ -230,3 +230,101 @@ pub fn quiet_browser_keys(win: &tauri::WebviewWindow) {
     #[cfg(not(windows))]
     let _ = win;
 }
+
+/// Is Claude running: the Claude app, or Claude Code in a terminal? His own
+/// big brain runs (children of this process) don't count, or he'd wake
+/// himself up.
+pub fn claude_running() -> bool {
+    let me = std::process::id();
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+        };
+        // SAFETY: Toolhelp calls over a locally owned entry struct whose
+        // dwSize is set; the snapshot handle is closed on every path
+        return unsafe {
+            let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return false };
+            let mut entry = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+            let mut found = false;
+            if Process32FirstW(snap, &mut entry).is_ok() {
+                loop {
+                    let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+                    let name = String::from_utf16_lossy(&entry.szExeFile[..len]);
+                    // "Claude.exe" (the app) or "claude.exe" (Claude Code)
+                    if name.eq_ignore_ascii_case(CLAUDE_EXE) && entry.th32ParentProcessID != me {
+                        found = true;
+                        break;
+                    }
+                    if Process32NextW(snap, &mut entry).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = CloseHandle(snap);
+            found
+        };
+    }
+    #[cfg(not(windows))]
+    {
+        // pid, parent pid, and the program (a full path on macOS)
+        let Ok(out) = Command::new("ps").args(["-Ao", "pid=,ppid=,comm="]).output() else { return false };
+        String::from_utf8_lossy(&out.stdout).lines().any(|l| {
+            let mut parts = l.split_whitespace();
+            let (_pid, ppid) = (parts.next(), parts.next().and_then(|p| p.parse::<u32>().ok()));
+            let comm = parts.collect::<Vec<_>>().join(" ");
+            let base = comm.rsplit('/').next().unwrap_or("");
+            // "Claude" (the app's main process, not its helpers) or "claude"
+            base.eq_ignore_ascii_case("claude") && ppid != Some(me)
+        })
+    }
+}
+
+/// Start him when the user logs in (hidden until Claude opens: `--with-claude`).
+/// Windows: the per-user Run key. Mac: a LaunchAgent. Returns false if it
+/// couldn't be changed.
+pub fn set_login_item(on: bool) -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    #[cfg(windows)]
+    {
+        use windows::core::w;
+        use windows::Win32::System::Registry::{RegDeleteKeyValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ};
+        let key = w!(r"Software\Microsoft\Windows\CurrentVersion\Run");
+        let name = w!("ClawdAssistant");
+        // SAFETY: plain registry calls with owned, NUL-terminated wide strings
+        return unsafe {
+            if on {
+                let line = format!("\"{}\" --with-claude", exe.display());
+                let wide: Vec<u16> = line.encode_utf16().chain(std::iter::once(0)).collect();
+                RegSetKeyValueW(HKEY_CURRENT_USER, key, name, REG_SZ.0, Some(wide.as_ptr() as *const _), (wide.len() * 2) as u32).is_ok()
+            } else {
+                let r = RegDeleteKeyValueW(HKEY_CURRENT_USER, key, name);
+                r.is_ok() || r == windows::Win32::Foundation::ERROR_FILE_NOT_FOUND
+            }
+        };
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let dir = home_dir().join("Library").join("LaunchAgents");
+        let plist = dir.join("com.clawd.assistant.plist");
+        if !on {
+            return std::fs::remove_file(&plist).is_ok() || !plist.exists();
+        }
+        let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let body = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key><string>com.clawd.assistant</string>\n  <key>ProgramArguments</key>\n  <array><string>{}</string><string>--with-claude</string></array>\n  <key>RunAtLoad</key><true/>\n  <key>ProcessType</key><string>Interactive</string>\n</dict>\n</plist>\n",
+            esc(&exe.to_string_lossy())
+        );
+        let _ = std::fs::create_dir_all(&dir);
+        if std::fs::read_to_string(&plist).map_or(false, |s| s == body) {
+            return true;
+        }
+        return std::fs::write(&plist, body).is_ok();
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = (on, exe);
+        false
+    }
+}

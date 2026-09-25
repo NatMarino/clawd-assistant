@@ -87,6 +87,10 @@ struct PetConfig {
     /// turns it back on.
     #[serde(default = "yes")]
     on_taskbar: bool,
+    /// start at login, hidden, and come out when Claude opens (the app, or
+    /// Claude Code). On by default; the gear switches it off.
+    #[serde(default = "yes")]
+    start_with_claude: bool,
 }
 
 fn yes() -> bool {
@@ -95,7 +99,7 @@ fn yes() -> bool {
 
 impl Default for PetConfig {
     fn default() -> Self {
-        Self { x: None, y: None, scale: 1.75, feed: Default::default(), on_taskbar: true }
+        Self { x: None, y: None, scale: 1.75, feed: Default::default(), on_taskbar: true, start_with_claude: true }
     }
 }
 
@@ -159,6 +163,8 @@ struct AppState {
     /// (pet scale, x, y) as physical offsets from the window's top-left
     anchor: Mutex<Option<(f64, f64, f64)>>,
     brain: Arc<brain::Brain>,
+    /// started at login and still hidden, waiting for Claude to open
+    waiting: AtomicBool,
 }
 
 // --- living on the taskbar ---------------------------------------------
@@ -406,6 +412,39 @@ fn add_local_items(tx: tauri::State<state::EventSender>, json: String) -> bool {
         Ok(items) => tx.0.lock_or_recover().send(state::PetEvent::Items(items, "local")).is_ok(),
         Err(_) => false,
     }
+}
+
+/// Out he comes: Claude just opened (or the tray called him) while he was
+/// waiting hidden since login. Does nothing if he's already out.
+fn reveal(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    if !state.waiting.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    if let Some(win) = app.get_webview_window("pet") {
+        let _ = win.show();
+    }
+    use tauri::Emitter;
+    let _ = app.emit_to("pet", "claude-opened", ());
+}
+
+/// Is he hidden, waiting for Claude? (The page stays quiet until he's out.)
+#[tauri::command]
+fn waiting_for_claude(state: tauri::State<AppState>) -> bool {
+    state.waiting.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn get_start_with_claude(state: tauri::State<AppState>) -> bool {
+    state.cfg.lock_or_recover().start_with_claude
+}
+
+/// The gear's switch: start at login and come out with Claude, or not.
+#[tauri::command]
+fn set_start_with_claude(state: tauri::State<AppState>, on: bool) -> bool {
+    state.cfg.lock_or_recover().start_with_claude = on;
+    state.dirty.store(true, Ordering::Relaxed);
+    platform::set_login_item(on)
 }
 
 /// A line from the page for page.log (errors, and what was clicked).
@@ -695,11 +734,13 @@ fn main() {
             walk: Mutex::new(None),
             anchor: Mutex::new(None),
             brain: Arc::new(brain::Brain::default()),
+            waiting: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             set_opaque_bounds, start_drag, end_drag, set_pet_scale, get_pet_scale, quit_app,
             open_link, ask_claude, taskbar_info, go_to_taskbar, walk_to, stop_walk, report_anchor, save_intro, load_intro,
             brain_status, brain_run, brain_stop, brain_open, read_prefs, add_local_items, page_log,
+            waiting_for_claude, get_start_with_claude, set_start_with_claude,
             state::get_pet_state, state::dismiss_item, state::hand_off_item
         ])
         .setup(move |app| {
@@ -774,7 +815,27 @@ fn main() {
                     state.cfg.lock_or_recover().on_taskbar = false;
                 }
             }
-            let _ = win.show();
+            // Started at login: stay hidden until Claude opens (or the tray
+            // calls him). Keep the login entry pointing at this copy.
+            platform::set_login_item(saved.start_with_claude);
+            let at_login = std::env::args().any(|a| a == "--with-claude");
+            if at_login && saved.start_with_claude && !platform::claude_running() {
+                state.waiting.store(true, Ordering::Relaxed);
+                let handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(Duration::from_secs(3));
+                    let state = handle.state::<AppState>();
+                    if !state.waiting.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if platform::claude_running() {
+                        reveal(&handle);
+                        break;
+                    }
+                });
+            } else {
+                let _ = win.show();
+            }
 
             // the tray icon: the way to call him out, send him home, or quit
             // without hunting for him and pressing q
@@ -795,11 +856,13 @@ fn main() {
                     .on_menu_event(|app, ev| match ev.id.as_ref() {
                         "quit" => app.exit(0),
                         other => {
+                            reveal(app);
                             let _ = app.emit_to("pet", "tray", other.to_string());
                         }
                     })
                     .on_tray_icon_event(|tray, ev| {
                         if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
+                            reveal(tray.app_handle());
                             let _ = tray.app_handle().emit_to("pet", "tray", "summon".to_string());
                         }
                     });

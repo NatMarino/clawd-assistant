@@ -15,6 +15,8 @@
 // silent, so a broken engine is never a broken pet.
 'use strict';
 
+import { lines, traits } from './personality.js';
+
 // --- what he says -----------------------------------------------------
 //
 // Greeting and body are SEPARATE, because a pet that opens every single
@@ -22,18 +24,16 @@
 // greeting shows up sometimes (GREET_CHANCE), only on fresh news, and never
 // the same one twice running.
 // {n} is ", Nat" once he knows your name, and nothing before that.
-const GREETINGS = [
-  'Hey{n}!', 'Hi{n}.', 'Psst{n}.', 'Oh! Hi{n}.', 'Hello{n}.', 'Excuse me{n}.', 'Ahem.',
-];
+// The lines themselves live in personality.js: they depend on who he is.
 const GREET_CHANCE = 0.35;
 
 // A nudge is a waiting item he already told you about, still sitting there.
 // He talks as himself, a small coworker: "I need…", "I just finished…".
 // These open a line; the item's own words follow.
 const OPENERS = {
-  waiting: ['I need your help with this one.', 'Can you look at this for me?', 'This one needs you.', 'I need you for a sec.'],
-  message: ['I’ve got news.', 'Heads up.', 'Guess what?', 'Just so you know.'],
-  nudge: ['I still need you on this one.', 'Don’t forget me!', 'I’m still waiting on this one.', 'Friendly nudge from me.'],
+  get waiting() { return lines('waiting'); },
+  get message() { return lines('message'); },
+  get nudge() { return lines('nudge'); },
 };
 
 // what to call you; set once you've told him (index.html, the intro)
@@ -62,7 +62,10 @@ const DEFAULTS = {
   style: 'words',
   backend: 'system',
   voiceName: '',   // '' = fall back to PREFERRED, then the browser default
-  volume: 0.9,
+  volume: 0.75,
+  // animalese has its own pitch: the words voice's 1.4–2.0 barely moves a
+  // chattering crab, so these are real registers (see ANIMALESE_PITCH)
+  animalesePitch: 'normal',
   rate: 1,
   chirp: true,
   // Well above natural, chosen by ear: the Windows voices are newsreader-flat
@@ -80,6 +83,8 @@ let settings = { ...DEFAULTS };
 try {
   const raw = localStorage.getItem('voice');
   if (raw) settings = { ...DEFAULTS, ...(JSON.parse(raw) || {}) };
+  // the old default was a touch loud: move anyone still on it down
+  if (!settings.v2) { if (settings.volume === 0.9) settings.volume = DEFAULTS.volume; settings.v2 = true; }
 } catch {}
 
 function save() {
@@ -87,6 +92,10 @@ function save() {
 }
 
 function get() { return { ...settings }; }
+// While he's hidden, waiting for Claude to open: not a peep. Anything he
+// wanted to say waits (canAnnounce is false) and comes out when he does.
+let muted = false;
+function setMuted(on) { muted = !!on; if (muted) stop(); }
 function set(patch) {
   settings = { ...settings, ...patch };
   for (const k of Object.keys(LIMITS)) {
@@ -180,7 +189,7 @@ function lineForItem(item, how = 'new', { minutes = 0, count = 1, forceGreeting 
   body = endStop(cap(body));
   const lead = count > 1 ? `I’ve got ${count} new things for you. ` : '';
   const greet = (forceGreeting || (how === 'new' && Math.random() < GREET_CHANCE))
-    ? pick(GREETINGS, 'greet').replace('{n}', nameTail()) + ' ' : '';
+    ? pick(lines('greetings'), 'greet').replace('{n}', nameTail()) + ' ' : '';
   return greet + lead + body;
 }
 
@@ -190,12 +199,35 @@ function lineForItem(item, how = 'new', { minutes = 0, count = 1, forceGreeting 
 // A plain callback rather than events: there is exactly one listener.
 let speakingListener = null;
 let speakingOffTimer = null;
+let speakingOnTimer = null;
 // fn(on, kind) — kind is 'speech' or 'chirp', because only the chirp squints
 function onSpeaking(fn) { speakingListener = fn; }
 function setSpeaking(on, kind = 'speech') {
   clearTimeout(speakingOffTimer);
+  clearTimeout(speakingOnTimer);
   if (speakingListener) speakingListener(!!on, kind);
 }
+// The bob starts a beat after his voice does and stops a beat before it
+// ends: a body still bobbing after the last sound reads as a glitch, and one
+// that starts early looks like it's lip-syncing to nothing.
+const BOB_LATE_MS = 120;
+const BOB_EARLY_MS = 150;
+function bobFor(ms, kind = 'speech') {
+  clearTimeout(speakingOffTimer);
+  clearTimeout(speakingOnTimer);
+  const off = Math.max(BOB_LATE_MS + 150, ms - BOB_EARLY_MS);
+  speakingOnTimer = setTimeout(() => { if (speakingListener) speakingListener(true, kind); }, BOB_LATE_MS);
+  speakingOffTimer = setTimeout(() => { if (speakingListener) speakingListener(false, kind); }, off);
+}
+// how long a line takes in the words voice (it has no progress to read):
+// about 3 words a second at rate 1, plus the pauses punctuation makes
+function speechMs(text) {
+  const words = String(text).split(/\s+/).filter(Boolean).length;
+  const pauses = (String(text).match(/[,.!?;:…]/g) || []).length;
+  return (words * 320 + pauses * 200 + 200) / (Number(settings.rate) || 1);
+}
+// the words voice's own "still speaking" can stick; this bounds it
+let wordsUntil = 0;
 // the chirp has no onend of its own, so it books its own silence
 function speakingFor(ms) {
   setSpeaking(true, 'chirp');
@@ -229,11 +261,19 @@ const systemBackend = {
     u.volume = settings.volume;
     u.rate = settings.rate;
     u.pitch = settings.pitch;
-    // the body bobs for exactly as long as the mouth is going
-    u.onstart = () => setSpeaking(true);
-    u.onend = () => setSpeaking(false);
-    u.onerror = () => setSpeaking(false);
+    // the body bobs while the mouth is going: from a beat after it starts
+    // to a beat before our estimate of the end, or the real end if sooner
+    u.onstart = () => {
+      const est = speechMs(text);
+      wordsUntil = Date.now() + est * 1.4;
+      bobFor(est);
+    };
+    const done = () => { wordsUntil = 0; setSpeaking(false); };
+    u.onend = done;
+    u.onerror = done;
     speechSynthesis.cancel(); // an alert supersedes whatever was mid-sentence
+    // speaking from now, even before the engine says it started
+    wordsUntil = Date.now() + speechMs(text) * 1.4 + 1000;
     speechSynthesis.speak(u);
   },
   stop() { try { speechSynthesis.cancel(); } catch {} setSpeaking(false); },
@@ -285,6 +325,47 @@ function audioCtx() {
   return audio;
 }
 
+// Every sound he makes goes through one chain: a compressor as a soft
+// limiter (so a pile of blips can never clip into crackle), then a gentle
+// low-pass that takes the fizz off the top.
+let bus = null;
+function outBus(ctx) {
+  if (bus && bus.context === ctx) return bus;
+  const lim = ctx.createDynamicsCompressor();
+  lim.threshold.value = -12;
+  lim.knee.value = 10;
+  lim.ratio.value = 12;
+  lim.attack.value = 0.003;
+  lim.release.value = 0.15;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 4500;
+  lp.Q.value = 0.5;
+  lim.connect(lp);
+  lp.connect(ctx.destination);
+  bus = lim;
+  return bus;
+}
+
+// ONE MOUTH. Whatever he's saying (animalese chatter, or a sample while you
+// pick a voice), a new line fades the old one out in ~40 ms and stops its
+// scheduled sounds, so he never talks over himself.
+let mouth = null; // { gain, nodes: [] }
+function hush() {
+  if (mouth && audio) {
+    const t = audio.currentTime;
+    try {
+      mouth.gain.gain.cancelScheduledValues(t);
+      mouth.gain.gain.setValueAtTime(mouth.gain.gain.value, t);
+      mouth.gain.gain.linearRampToValueAtTime(0, t + 0.04);
+    } catch {}
+    for (const n of mouth.nodes) { try { n.stop(t + 0.05); } catch {} }
+  }
+  mouth = null;
+  chatterUntil = 0;
+  setSpeaking(false);
+}
+
 // Chirp moods. Each is a family, not a fixed tune: every call picks one of
 // its contours (pitch steps per blip, as fractions above the base) and
 // wobbles the timing a little, so the same moment never sounds canned.
@@ -308,7 +389,7 @@ const CHIRPS = {
 // `count` trims (or repeats) the chosen contour; omit it for the contour's own
 // length. Returns false when sounds are off.
 function chirp(count, shape = 'up') {
-  if (!settings.enabled || (!settings.chirp && shape !== 'talk')) return false;
+  if (muted || !settings.enabled || (!settings.chirp && shape !== 'talk')) return false;
   const ctx = audioCtx();
   if (!ctx) return false;
   const mood = CHIRPS[shape] || CHIRPS.up;
@@ -330,7 +411,7 @@ function chirp(count, shape = 'up') {
     gain.gain.setValueAtTime(0.0001, t);
     gain.gain.linearRampToValueAtTime(peak, t + 0.005);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + mood.decay);
-    osc.connect(lp); lp.connect(gain); gain.connect(ctx.destination);
+    osc.connect(lp); lp.connect(gain); gain.connect(outBus(ctx));
     osc.start(t);
     osc.stop(t + mood.decay + 0.015);
     t += mood.gap * (0.9 + Math.random() * 0.2);
@@ -366,26 +447,45 @@ const CLICK = { p: [1500, false], t: [3500, false], k: [2500, false], b: [1200, 
 const HUM = { m: [250, 1100], n: [250, 1600] };
 const GLIDE = { l: [400, 1200], r: [450, 1300], w: [300, 700] };
 
+// the three animalese registers: base pitch (Hz) and how far the "mouth"
+// (formants) moves with it. Super deep is a big rumbly crab; high is
+// brighter, not squeaky.
+const ANIMALESE_PITCH = {
+  deep: { f0: 70, formants: 0.75 },
+  normal: { f0: 230, formants: 1 },
+  high: { f0: 380, formants: 1.1 },
+};
+
 function animalese(text, { muffled = false } = {}) {
-  if (!settings.enabled) return false;
+  if (muted || !settings.enabled) return false;
   const ctx = audioCtx();
   if (!ctx) return false;
   const clean = String(text || '').toLowerCase().replace(/[^a-z0-9 .,!?'’-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
   if (!clean) return false;
-  const vol = Math.max(0, Math.min(1, Number(settings.volume))) * (muffled ? 0.55 : 0.5);
-  const pitch = Math.max(0.6, Number(settings.pitch) || 1);
-  const f0Base = 170 * pitch * (muffled ? 0.85 : 1);
+  hush(); // one mouth: a new line replaces whatever he was saying
+  if (typeof speechSynthesis !== 'undefined') { try { speechSynthesis.cancel(); } catch {} }
+  const flav = muffled ? { jump: 1, even: false, slow: 1, range: 1 } : traits().voice;
+  const reg = ANIMALESE_PITCH[settings.animalesePitch] || ANIMALESE_PITCH.normal;
+  // animalese sits ~15% under the chirps
+  const vol = Math.max(0, Math.min(1, Number(settings.volume))) * (muffled ? 0.6 : 0.42);
+  const f0Base = reg.f0 * (muffled ? 0.85 : 1);
+  const fScale = reg.formants;
+  // in the egg every letter is a struggle through the shell
+  const stretch = (muffled ? 1.2 : 1) * (flav.slow || 1);
   const out = ctx.createGain();
   out.gain.value = vol;
-  let dest = out;
+  const nodes = [];
+  mouth = { gain: out, nodes };
   if (muffled) {
+    // talking into a pillow: a low, slightly resonant low-pass
     const shell = ctx.createBiquadFilter();
     shell.type = 'lowpass';
-    shell.frequency.value = 700;
+    shell.frequency.value = 380;
+    shell.Q.value = 4;
     out.connect(shell);
-    shell.connect(ctx.destination);
+    shell.connect(outBus(ctx));
   } else {
-    out.connect(ctx.destination);
+    out.connect(outBus(ctx));
   }
   if (!noiseBuf) {
     noiseBuf = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.2), ctx.sampleRate);
@@ -397,31 +497,58 @@ function animalese(text, { muffled = false } = {}) {
   let t = t0;
   const letters = [...clean];
   const question = /\?\s*$/.test(clean);
+  const bang = /!\s*$/.test(clean);
   const n = letters.length;
+  const ATTACK = 0.011;
+  const RELEASE = 0.012;
 
-  // one sung vowel-ish sound: sawtooth at f0 through two formant filters
-  const voiced = (at, dur, f0, [f1, f2], level = 1) => {
+  // sometimes, from the egg, a little "mmf" thump before the words
+  if (muffled && Math.random() < 0.4) {
     const o = ctx.createOscillator();
-    o.type = 'sawtooth';
-    o.frequency.setValueAtTime(f0, at);
-    o.frequency.linearRampToValueAtTime(f0 * 0.97, at + dur);
+    o.type = 'sine';
+    o.frequency.setValueAtTime(140, t);
+    o.frequency.exponentialRampToValueAtTime(70, t + 0.1);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.6, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o.connect(g); g.connect(out);
+    o.start(t); o.stop(t + 0.14);
+    nodes.push(o);
+    t += 0.14;
+  }
+
+  // one sung vowel-ish sound: a sawtooth/triangle blend at f0 through two
+  // formant filters, with a soft attack and release so letters meet cleanly
+  // instead of clicking into each other
+  const voiced = (at, dur, f0, [f1, f2], level = 1) => {
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, at);
-    g.gain.linearRampToValueAtTime(0.5 * level, at + 0.008);
-    g.gain.setValueAtTime(0.5 * level, at + dur * 0.6);
-    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
-    for (const [fr, q, amt] of [[f1, 6, 1], [f2, 9, 0.6]]) {
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.value = fr;
-      bp.Q.value = q;
-      const a = ctx.createGain();
-      a.gain.value = amt * 2.2;
-      o.connect(bp); bp.connect(a); a.connect(g);
+    g.gain.linearRampToValueAtTime(0.5 * level, at + ATTACK);
+    g.gain.setValueAtTime(0.5 * level, at + Math.max(ATTACK, dur - RELEASE));
+    g.gain.linearRampToValueAtTime(0.0001, at + dur + RELEASE);
+    for (const [type, mix] of [['sawtooth', 0.65], ['triangle', 0.35]]) {
+      const o = ctx.createOscillator();
+      o.type = type;
+      o.frequency.setValueAtTime(f0, at);
+      o.frequency.linearRampToValueAtTime(f0 * 0.97, at + dur);
+      const m = ctx.createGain();
+      m.gain.value = mix;
+      o.connect(m);
+      for (const [fr, q, amt] of [[f1 * fScale, 5, 1], [f2 * fScale, 8, 0.6]]) {
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = fr;
+        bp.Q.value = q;
+        const a = ctx.createGain();
+        a.gain.value = amt * 1.3;
+        m.connect(bp); bp.connect(a); a.connect(g);
+      }
+      o.start(at);
+      o.stop(at + dur + RELEASE + 0.02);
+      nodes.push(o);
     }
-    g.connect(dest);
-    o.start(at);
-    o.stop(at + dur + 0.02);
+    g.connect(out);
   };
   const noise = (at, dur, freq, q, level = 1) => {
     const src = ctx.createBufferSource();
@@ -432,47 +559,58 @@ function animalese(text, { muffled = false } = {}) {
     bp.Q.value = q;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, at);
-    g.gain.linearRampToValueAtTime(0.35 * level, at + 0.004);
+    g.gain.linearRampToValueAtTime(0.3 * level, at + 0.004);
     g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
-    src.connect(bp); bp.connect(g); g.connect(dest);
+    src.connect(bp); bp.connect(g); g.connect(out);
     src.start(at, Math.random() * 0.1);
     src.stop(at + dur + 0.01);
+    nodes.push(src);
   };
 
   letters.forEach((ch, i) => {
     // the pitch contour: each letter a little different (seeded by the
     // letter, so the same word sounds the same), falling gently through the
-    // sentence, rising over the last few letters of a question
-    const seed = ((ch.charCodeAt(0) * 37 + i * 11) % 23) / 23 - 0.5;
-    const fall = 1 - 0.12 * (i / Math.max(1, n));
-    const lift = question && i > n - 5 ? 1 + 0.08 * (i - (n - 5)) : 1;
-    const f0 = f0Base * (1 + seed * 0.14) * fall * lift;
-    if (ch === ' ') { t += 0.035; return; }
-    if (ch === ',' || ch === '-') { t += 0.12; return; }
-    if (ch === '.' || ch === '!' || ch === '?') { t += 0.2; return; }
+    // sentence, rising over the last few letters of a question. His
+    // temperament shapes it: how far letters jump, how even, how wide.
+    const seed = flav.even ? 0 : ((ch.charCodeAt(0) * 37 + i * 11) % 23) / 23 - 0.5;
+    const fallBy = flav.falling ? 0.25 : 0.12;
+    const fall = 1 - fallBy * (i / Math.max(1, n));
+    const tail = i > n - 5 ? i - (n - 5) : 0;
+    let lift = 1;
+    if (question && tail) lift = 1 + 0.08 * tail * (flav.range || 1);
+    else if (bang && flav.bang && tail) lift = 1 + 0.1 * tail;
+    else if (flav.upturn && tail) lift = 1 + 0.05 * tail;
+    // from the egg: a slow wobble, as if the shell were rocking
+    const wob = muffled ? 1 + 0.05 * Math.sin(2 * Math.PI * 6 * (t - t0)) : 1;
+    const f0 = f0Base * (1 + seed * 0.14 * (flav.jump || 1)) * fall * lift * wob;
+    const step = (d) => { t += d * stretch; };
+    if (ch === ' ') { step(0.035); return; }
+    if (ch === ',' || ch === '-') { step(0.12); return; }
+    if (ch === '.' || ch === '!' || ch === '?') { step(0.2); return; }
     if (ch === "'" || ch === '’') return;
-    if (/[0-9]/.test(ch)) { voiced(t, 0.06, f0, SCHWA); t += 0.066; return; }
-    if (VOWELS[ch]) { voiced(t, 0.07, f0, VOWELS[ch]); t += 0.068; return; }
-    if (HISS[ch]) { noise(t, 0.045, HISS[ch][0], HISS[ch][1], 0.8); t += 0.05; return; }
+    if (/[0-9]/.test(ch)) { voiced(t, 0.06 * stretch, f0, SCHWA); step(0.066); return; }
+    if (VOWELS[ch]) { voiced(t, 0.066 * stretch, f0, VOWELS[ch]); step(0.068); return; }
+    // Consonants are pitched blips too, never noise: noise bursts under the
+    // vowels were the "crunch". A hiss is a short, bright, slightly higher
+    // blip; a click a very short one with a quick drop in pitch.
+    if (HISS[ch]) { voiced(t, 0.038 * stretch, f0 * 1.12, [450, Math.min(3200, HISS[ch][0] * 0.5)], 0.4); step(0.045); return; }
     if (CLICK[ch]) {
-      noise(t, 0.018, CLICK[ch][0], 1.5, 1);
-      if (CLICK[ch][1]) voiced(t + 0.01, 0.035, f0, SCHWA, 0.7);
-      t += 0.045;
+      voiced(t, 0.03 * stretch, f0 * (CLICK[ch][1] ? 0.95 : 1.05), [550, Math.min(2600, CLICK[ch][0])], CLICK[ch][1] ? 0.65 : 0.5);
+      step(0.042);
       return;
     }
-    if (HUM[ch]) { voiced(t, 0.05, f0, HUM[ch], 0.7); t += 0.05; return; }
-    if (GLIDE[ch]) { voiced(t, 0.05, f0, GLIDE[ch], 0.8); t += 0.05; return; }
-    voiced(t, 0.045, f0, SCHWA, 0.6);
-    t += 0.047;
+    if (HUM[ch]) { voiced(t, 0.048 * stretch, f0, HUM[ch], 0.7); step(0.05); return; }
+    if (GLIDE[ch]) { voiced(t, 0.048 * stretch, f0, GLIDE[ch], 0.8); step(0.05); return; }
+    voiced(t, 0.045 * stretch, f0, SCHWA, 0.6);
+    step(0.047);
   });
 
-  const ms = (t - t0) * 1000 + 120;
-  chatterUntil = Date.now() + ms;
-  // his body bobs for exactly as long as he chatters (the chirp squint only
-  // for the egg's mumbling, which isn't him yet)
-  setSpeaking(true, 'speech');
-  clearTimeout(speakingOffTimer);
-  speakingOffTimer = setTimeout(() => setSpeaking(false, 'speech'), ms);
+  // the sound itself ends at t (plus the last letter's release)
+  const ms = (t - t0) * 1000 + 30;
+  // 'still talking' ends a beat early too, so the talking pose lets go
+  // just before the last sound, not after it
+  chatterUntil = Date.now() + ms - BOB_EARLY_MS;
+  bobFor(ms);
   return true;
 }
 
@@ -509,7 +647,7 @@ function crack(size = 1) {
     ng.gain.setValueAtTime(0.0001, t);
     ng.gain.linearRampToValueAtTime(vol * (0.22 + 0.06 * size), t + 0.002);
     ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
-    n.connect(bp); bp.connect(ng); ng.connect(ctx.destination);
+    n.connect(bp); bp.connect(ng); ng.connect(outBus(ctx));
     n.start(t, Math.random() * 0.1);
     n.stop(t + 0.05);
     // the chip: a high blip falling fast
@@ -521,7 +659,7 @@ function crack(size = 1) {
     og.gain.setValueAtTime(0.0001, t);
     og.gain.linearRampToValueAtTime(vol * 0.12, t + 0.003);
     og.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
-    o.connect(og); og.connect(ctx.destination);
+    o.connect(og); og.connect(outBus(ctx));
     o.start(t);
     o.stop(t + 0.07);
     t += 0.045 + Math.random() * 0.035; // crk-crk, never evenly spaced
@@ -555,7 +693,7 @@ function munch() {
   ng.gain.setValueAtTime(0.0001, t);
   ng.gain.linearRampToValueAtTime(vol * 0.28, t + 0.008);
   ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
-  noise.connect(bp); bp.connect(ng); ng.connect(ctx.destination);
+  noise.connect(bp); bp.connect(ng); ng.connect(outBus(ctx));
   noise.start(t);
   noise.stop(t + 0.12);
 
@@ -567,7 +705,7 @@ function munch() {
   og.gain.setValueAtTime(0.0001, t);
   og.gain.linearRampToValueAtTime(vol * 0.35, t + 0.012);
   og.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
-  osc.connect(og); og.connect(ctx.destination);
+  osc.connect(og); og.connect(outBus(ctx));
   osc.start(t);
   osc.stop(t + 0.15);
   return true;
@@ -590,13 +728,13 @@ async function warm() { if (settings.enabled) await backend(); }
 
 let lastSpokeAt = 0;
 
-function stop() { Object.values(BACKENDS).forEach((b) => { try { b.stop(); } catch {} }); }
+function stop() { hush(); Object.values(BACKENDS).forEach((b) => { try { b.stop(); } catch {} }); }
 
 // Say something now, ignoring the gap: his answers to a click, and his
 // first words. Silent when his voice is off, unless `force` (the settings
 // Test and voice-pick buttons, which are about hearing him).
 async function say(text, { force = false } = {}) {
-  if (!text || (!settings.enabled && !force)) return false;
+  if (!text || muted || (!settings.enabled && !force)) return false;
   // animalese by choice, or because this web view has no speech voices at
   // all (it can happen on a Mac): he still talks, just in chatter
   if (settings.style === 'animalese' || typeof window.speechSynthesis === 'undefined') {
@@ -604,6 +742,7 @@ async function say(text, { force = false } = {}) {
     return animalese(sanitise(text));
   }
   lastSpokeAt = Date.now();
+  hush(); // one mouth: no chatter under the words
   const b = await backend();
   try { b.speak(text); return true; } catch (err) { console.warn('speak failed', err); return false; }
 }
@@ -613,6 +752,7 @@ async function say(text, { force = false } = {}) {
 // the voice is off (the caller should consider it handled).
 async function announce(text) {
   if (!settings.enabled) return null;
+  if (muted) return false;
   if (Date.now() - lastSpokeAt < MIN_GAP_MS) return false;
   if (isSpeaking()) return false;
   await say(text);
@@ -623,15 +763,16 @@ async function announce(text) {
 // animation that leads into the line (the letter arriving) without then
 // being told "too soon".
 function canAnnounce() {
-  if (!settings.enabled) return false;
+  if (muted || !settings.enabled) return false;
   if (Date.now() - lastSpokeAt < MIN_GAP_MS) return false;
   return !isSpeaking();
 }
 function isSpeaking() {
-  return Date.now() < chatterUntil || (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking);
+  return Date.now() < chatterUntil
+    || (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking && Date.now() < wordsUntil - BOB_EARLY_MS);
 }
 
 export {
-  announce, canAnnounce, isSpeaking, setName, babble, warmAudio, crack, animalese, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
-  lineForItem, sanitise, systemBackend, DEFAULTS, LIMITS,
+  announce, canAnnounce, isSpeaking, setName, setMuted, babble, warmAudio, crack, animalese, chirp, munch, say, warm, stop, get, set, nudge, onSpeaking,
+  lineForItem, sanitise, systemBackend, DEFAULTS, LIMITS, ANIMALESE_PITCH,
 };

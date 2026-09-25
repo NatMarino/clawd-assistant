@@ -75,6 +75,11 @@ in it is tied to the person who sent it.
   needs you he tucks in behind the taskbar with his eyes peeking over, looks up
   now and then, and every few minutes takes a short stroll and wanders back.
   When something needs you he pops up and hops. Hover his head to bring him up.
+- **He starts with Claude.** He starts when you log in, stays out of sight, and
+  pops up when the Claude app (or Claude Code) opens. The gear's *start with
+  Claude* switches it off.
+- **Everyone gets a slightly different Claw'd.** Some are sweet, some silly,
+  some very serious. You find out when he hatches.
 - **The tray icon** (the crab by the clock, or in the menu bar on a Mac): click
   to call him out; right-click for *Back to the taskbar*, *Start over* and *Quit*.
 - **Click** Claw'd for everything he's tracking: *Waiting on you*, *Coming up*,

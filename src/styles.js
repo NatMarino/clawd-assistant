@@ -33,6 +33,9 @@ import { validateClips } from './sprite-kit.js';
 //   happy_wiggle  clicked / petted
 //   celebrate     the "waiting on you" list was just emptied
 //   peek          idle variety: peeks in from the edge
+//   hearts        love: your besties, and now and then when clicked
+//   mad           a waiting item ignored through several nudges
+//   talk          saying something longer (no mouth; a talking pose)
 //   held          picked up: dangling and flailing (stand-in: his wave, swinging)
 //   shake_off     back on his feet after a tumble, shaking it off
 //   walk          strolling along the taskbar (drawn facing right; the host
@@ -46,6 +49,9 @@ const PLACEHOLDERS = {
   happy_wiggle: 'wave',
   celebrate: 'wave',
   peek: 'idle',
+  hearts: 'wave',
+  mad: 'needs_input',
+  talk: 'idle',
   walk: { from: 'idle', motion: 'walk' },
   held: { from: 'wave', motion: 'swing' },
   shake_off: { from: 'idle', motion: 'shake' },

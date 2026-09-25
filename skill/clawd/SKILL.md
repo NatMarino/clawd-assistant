@@ -107,9 +107,11 @@ array.
 ### Job: setup
 
 Before he hatches, Claw'd asked the user what they want his help with. That's
-`intro.json`'s `uses`, for example `["messages", "calendar", "reminders",
-"rundown", "tasks", "Something else: <their words>"]`, with any follow-ups
-alongside (`messages_focus`, `rundown_time`). Set him up for **exactly those
+`intro.json`'s `uses`, for example `["messages", "email", "calendar", "tasks",
+"docs", "meeting_notes", "reminders", "rundown", "app:<an app's name>",
+"Something else: <their words>"]`, with the apps they tapped in `apps` and any
+follow-ups alongside (`messages_focus`, `rundown_time`). `app:<name>` means
+"help me with that app": work out from its tools what's worth telling them. Set him up for **exactly those
 uses**, from the apps that are connected. **Ask the user nothing:** they're
 watching an egg, not reading a chat.
 

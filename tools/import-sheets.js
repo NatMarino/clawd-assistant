@@ -66,10 +66,13 @@ const CLIPS = {
   happy_wiggle: { loop: 'happy-wiggle' },
   celebrate: { loop: 'celebrate' },
   peek: { loop: 'peek', fromBottomEdge: true },
-  // walks in place facing right; the host moves him and mirrors it for left.
-  // The pack travels 1 art px per frame, so the clip carries that speed and
-  // his feet don't slide.
-  walk: { loop: 'walk', travelPxPerFrame: 1 },
+  hearts: { loop: 'hearts' },
+  mad: { loop: 'mad' },
+  talk: { loop: 'talk' },
+  // the scuttle: walks in place facing right; the host moves him (walk_left
+  // is its mirror). The pack's scuttle-across moves 2 art px a frame, so the
+  // clip carries that speed and his feet don't slide.
+  walk: { loop: 'scuttle', travelPxPerFrame: 2 },
 };
 
 function readFrames(file, count, skin) {

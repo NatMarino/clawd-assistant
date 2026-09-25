@@ -13,7 +13,8 @@ export const MODELS = {
   main: 'claude-sonnet-5',
 };
 
-export function createBrain(invoke, listen) {
+// note(): instructions added to every run (how he talks, from personality.js)
+export function createBrain(invoke, listen, { note = null } = {}) {
   const jobs = new Map();
   let seq = 0;
   let busy = 0;
@@ -39,6 +40,8 @@ export function createBrain(invoke, listen) {
   // mode: 'auto' | 'plan'. alsoAllow: tools the user just confirmed.
   function run({ prompt, extra = '', model = MODELS.main, mode = 'auto', resume = null, alsoAllow = [], maxTurns = 30, onEvent } = {}) {
     const job = `j${++seq}-${Date.now()}`;
+    const always = note ? note() : '';
+    extra = [extra, always].filter((x) => x && x.trim()).join('\n\n');
     busy++;
     return new Promise((resolve) => {
       jobs.set(job, { resolve, onEvent, texts: [], servers: null, session: '' });

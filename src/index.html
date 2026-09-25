@@ -338,6 +338,11 @@
     <button data-theme="dark">dark</button>
     <button data-theme="light">light</button>
   </div>
+  <div id="start-row" class="theme-row" hidden>
+    <span class="lbl">start with Claude:</span>
+    <button data-start="on" title="I start when you log in and come out when Claude opens">on</button>
+    <button data-start="off" title="I only start when you open me">off</button>
+  </div>
   <div id="custom-row" class="theme-row" hidden>
     <button id="custom-btn">customize how I look and sound…</button>
   </div>
@@ -412,13 +417,14 @@
   import { STYLES } from './styles.js';
   import { TreatSprite, FALL_MS } from './treats.js';
   import * as voice from './voice.js';
+  import * as persona from './personality.js';
   import { HATCH_MS } from './sprites-egg.js';
   import { createBrain, MODELS, spokenLine, readSummary, readStage, describeSend } from './brain.js';
 
   const IS_TAURI = !!window.__TAURI__;
   const invoke = IS_TAURI ? window.__TAURI__.core.invoke : null;
   // the big brain: Claude Code, run by him in the background (brain.js)
-  const brain = IS_TAURI ? createBrain(invoke, window.__TAURI__.event.listen) : null;
+  const brain = IS_TAURI ? createBrain(invoke, window.__TAURI__.event.listen, { note: persona.brainNote }) : null;
   // page.log in %APPDATA%\ClawdAssistant: every error, plus a short trail of
   // what happened before it (clicks, panels), for machines we can't see
   const trail = [];
@@ -583,9 +589,25 @@
   const toneRow = document.getElementById('voice-tone');
   const gearBtn = document.getElementById('gearbtn');
   const customRow = document.getElementById('custom-row');
-  // the gear: mode, theme, and one Customize button (skin, voice, pitch and
-  // size live in the picker it opens, the same one as during setup)
-  const SETTINGS_ROWS = [modeRow, themeRow, customRow];
+  const startRow = document.getElementById('start-row');
+  // the gear: mode, theme, starting with Claude, and one Customize button
+  // (skin, voice, pitch and size live in the picker it opens, the same one
+  // as during setup)
+  const SETTINGS_ROWS = [modeRow, themeRow, startRow, customRow];
+  function syncStartButtons(on) {
+    startRow.querySelectorAll('button[data-start]').forEach((b) => b.classList.toggle('active', (b.dataset.start === 'on') === on));
+  }
+  if (IS_TAURI) invoke('get_start_with_claude').then(syncStartButtons).catch(() => {});
+  else startRow.remove();
+  startRow.querySelectorAll('button[data-start]').forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const on = b.dataset.start === 'on';
+      syncStartButtons(on);
+      invoke('set_start_with_claude', { on }).catch(() => {});
+      voice.say(on ? 'Okay! I’ll come out whenever Claude does.' : 'Okay, I’ll wait for you to open me.');
+    };
+  });
 
   let panelTheme = 'system';
   try { panelTheme = localStorage.getItem('panelTheme') || 'system'; } catch {}
@@ -1015,7 +1037,6 @@
     if (instant) requestAnimationFrame(() => requestAnimationFrame(() => canvas.classList.remove('snap')));
   }
 
-  const NEW_SCREEN = ['Ooh, a new screen!', 'Wheee, a different screen!', 'Oh! Where am I? I like it here.'];
   async function refreshTaskbar() {
     if (!IS_TAURI) return;
     try { life.tb = await invoke('taskbar_info'); } catch { life.tb = null; }
@@ -1025,7 +1046,7 @@
       const here = `${life.tb.display}:${life.tb.display_name}`;
       if (life.lastDisplay && here !== life.lastDisplay && hatched && !life.walking) {
         plog('new display ' + here);
-        setTimeout(() => voice.say(NEW_SCREEN[Math.floor(Math.random() * NEW_SCREEN.length)]), 1400);
+        setTimeout(() => voice.say(persona.line('newScreen')), 1400);
       }
       life.lastDisplay = here;
     }
@@ -1044,7 +1065,7 @@
       return;
     }
     if (life.walking || life.busy || flourishing) return;
-    if (!life.nextStroll) life.nextStroll = now + between(STROLL_EVERY);
+    if (!life.nextStroll) life.nextStroll = now + between(STROLL_EVERY) * persona.traits().life.stroll;
     const away = Math.abs(tb.center_x - tb.home_x) > 8 * tb.sf;
     if (away) {
       if (now - life.calmSince > HOME_AFTER_MS) {
@@ -1054,14 +1075,15 @@
       return;
     }
     if (!life.tucked) {
-      if (now - life.calmSince > SETTLE_MS) {
+      if (now - life.calmSince > SETTLE_MS * persona.traits().life.settle) {
         setTuck(true);
-        life.nextPeek = now + between(PEEK_EVERY);
+        life.nextPeek = now + between(PEEK_EVERY) * persona.traits().life.peek;
       }
       return;
     }
-    if (now > life.nextStroll) { life.nextStroll = now + between(STROLL_EVERY); stroll(); return; }
-    if (now > life.nextPeek) { life.nextPeek = now + between(PEEK_EVERY); peekOnce(); }
+    const tr = persona.traits().life;
+    if (now > life.nextStroll) { life.nextStroll = now + between(STROLL_EVERY) * tr.stroll; stroll(); return; }
+    if (now > life.nextPeek) { life.nextPeek = now + between(PEEK_EVERY) * tr.peek; peekOnce(); }
   }
 
   // Walk his centre to `x` (physical px). The walk clip plays facing the way
@@ -1291,7 +1313,7 @@
           e.stopPropagation();
           if (!multi) { picked.clear(); chatChips.querySelectorAll('.chip').forEach((x) => x.classList.remove('on')); }
           if (picked.has(c) && multi) { picked.delete(c); b.classList.remove('on'); } else { picked.add(c); b.classList.add('on'); }
-          if (onChip) onChip(c);
+          if (onChip) onChip(c, picked.has(c));
         };
         chatChips.appendChild(b);
       }
@@ -1378,9 +1400,15 @@
   // say a line out loud and wait for him to finish it
   async function sayAndWait(text) {
     showToast(text); // his words on screen too, whether or not his voice is on
-    await voice.say(text);
-    await sleep(300);
-    for (let t = 0; voice.isSpeaking() && t < 20000; t += 150) await sleep(150);
+    let release = null;
+    try {
+      await voice.say(text);
+      // the talking pose starts a beat after his voice, like the bob
+      await sleep(120);
+      if (hatched && !flourishing && voice.isSpeaking()) release = hold('talk');
+      await sleep(180);
+      for (let t = 0; voice.isSpeaking() && t < 20000; t += 150) await sleep(150);
+    } finally { if (release) release(); }
     await sleep(250);
   }
 
@@ -1399,6 +1427,7 @@
   const SAMPLE = 'Hi! This is how I’d sound. What do you think?';
   const STYLES_SOUND = ['My words', 'Animalese only', 'No sound'];
   const PITCHES = [['Lower', 1.4], ['Normal', 1.8], ['Higher', 2.0]];
+  const A_PITCHES = [['Super deep', 'deep'], ['Normal', 'normal'], ['High', 'high']];
   const SIZES = [['Small', 1.0], ['Medium', 1.4], ['Big', 1.75], ['Huge', 2.3]];
   const shortVoice = (n) => n.replace(/^Microsoft\s+/i, '').replace(/\s*[-–(].*$/, '').trim() || n;
   const nearest = (list, v) => list.reduce((b, x) => (Math.abs(x[1] - v) < Math.abs(b[1] - v) ? x : b))[0];
@@ -1427,7 +1456,12 @@
           buttons: [{ label: 'Next', primary: true }], muffled: inEgg });
       }
     }
-    if (soundOn) {
+    if (soundOn && voice.get().style === 'animalese') {
+      await panel({ title: 'How high is my voice?', chips: A_PITCHES.map((p) => p[0]),
+        selected: [(A_PITCHES.find((p) => p[1] === voice.get().animalesePitch) || A_PITCHES[1])[0]],
+        onChip: (c) => { voice.set({ animalesePitch: A_PITCHES.find((p) => p[0] === c)[1] }); voice.say(SAMPLE); },
+        buttons: [{ label: 'Next', primary: true }], muffled: inEgg });
+    } else if (soundOn) {
       await panel({ title: 'How high is my voice?', chips: PITCHES.map((p) => p[0]),
         selected: [nearest(PITCHES, voice.get().pitch)],
         onChip: (c) => { voice.set({ pitch: PITCHES.find((p) => p[0] === c)[1] }); voice.say(SAMPLE); },
@@ -1515,7 +1549,10 @@
     }
   }
 
-  // --- D: what would you like my help with? (silent) ---
+  // --- D: what would you like my help with? (silent: bubble text only)
+  //     The chips come from the apps the big brain can actually reach, and
+  //     he reacts to every tap in his bubble, so it feels like he's
+  //     listening. With nothing to go on, the fixed list. ---
   const USES = [
     ['Keeping up with messages', 'messages'],
     ['My meetings and calendar', 'calendar'],
@@ -1523,23 +1560,51 @@
     ['A morning rundown', 'rundown'],
     ['Tasks and deadlines', 'tasks'],
   ];
-  async function askUses() {
-    const r = await panel({ title: 'What would you like my help with?', sub: 'Tap all that fit.',
-      chips: USES.map((u) => u[0]), multi: true, other: true, input: false,
-      placeholder: 'Tell me what else…', buttons: [{ label: 'That’s it', primary: true }], muffled: true });
+  // his reaction in the bubble for a moment, with a little muffled chirp
+  async function eggReact(text, ms = 1900) {
+    if (!text) return;
+    voice.chirp(null, 'muffled');
+    note(text);
+    await sleep(ms);
+  }
+  async function askUses(st) {
+    const found = persona.intakeChips(st && st.servers);
+    const chips = found.length > 2 ? found : USES.map(([label, use]) => ({ label, use }));
+    const title = found.length > 2 ? persona.introLine(found) : 'What would you like my help with?';
+    const r = await panel({ title, sub: 'Tap all that fit.',
+      chips: chips.map((c) => c.label), multi: true, other: true, input: false,
+      placeholder: 'Tell me what else…', buttons: [{ label: 'That’s it', primary: true }], muffled: true,
+      onChip: (label, on) => {
+        if (!on) return;
+        const c = chips.find((x) => x.label === label);
+        if (!c) return;
+        voice.chirp(2, 'muffled');
+        chatSub.textContent = persona.reactToUse(c.use, c);
+        chatSub.hidden = false;
+        placeChat(); reportBounds();
+      } });
     if (!r) return null;
-    const uses = r.chips.map((c) => (USES.find((u) => u[0] === c) || [c, c])[1]);
-    const out = { uses };
+    const otherText = (r.chips.find((c) => c.startsWith('Something else: ')) || '').replace('Something else: ', '');
+    const uses = r.chips.map((label) => {
+      const c = chips.find((x) => x.label === label);
+      return c ? c.use : label;
+    });
+    const out = { uses, apps: chips.filter((c) => uses.includes(c.use) && (c.apps || c.app)).map((c) => c.apps || c.app) };
+    await eggReact(persona.reactToUses(uses, otherText), otherText ? 2400 : 1700);
     if (uses.includes('messages')) {
       const m = await panel({ title: 'Which messages matter most?', chips: ['DMs', 'Mentions', 'A few channels'], multi: true,
         input: true, placeholder: 'Which channels? (optional)', buttons: [{ label: 'OK', primary: true }], muffled: true });
-      if (m) out.messages_focus = { kinds: m.chips, channels: m.text };
+      if (m) {
+        out.messages_focus = { kinds: m.chips, channels: m.text };
+        await eggReact(persona.reactToFocus(m.chips, m.text));
+      }
     }
     if (uses.includes('rundown')) {
       const t = await panel({ title: 'What time should your rundown be ready?',
         sub: 'Leave it blank and I’ll have it ready 15 minutes after your day starts.',
         input: true, placeholder: 'e.g. 8:45', buttons: [{ label: 'OK', primary: true }], muffled: true });
       if (t && t.text) out.rundown_time = t.text;
+      if (t) await eggReact(persona.reactToRundown(t.text));
     }
     return out;
   }
@@ -1575,7 +1640,7 @@
     if (!brain) return;
     const st = await reachBrain();
     if (!st) return;
-    const picks = await askUses();
+    const picks = await askUses(st);
     if (!picks) return;
     await saveIntro(picks);
     await customize({ inEgg: true });
@@ -1650,25 +1715,28 @@
   }
 
   async function firstWords() {
-    await sayAndWait('Hello, I’m Claw’d! I was just born, and I can tell we’re going to be good friends.');
+    await sayAndWait(persona.line('hello'));
     voice.chirp(null, 'light');
     await sleep(500);
     // his name for you: the one thing he has to know
     let name = '';
     while (!name) {
-      const r = await panel({ title: 'What’s your name?', input: true, placeholder: 'Your name', speak: 'What’s your name?' });
+      const ask = persona.line('askName');
+      const r = await panel({ title: ask, input: true, placeholder: 'Your name', speak: ask });
       if (!r) { await sleep(800); continue; }
       name = cleanName(r.text);
     }
     setUserName(name);
     await saveIntro({ name });
-    await sayAndWait(`${name}! I love it. Nice to meet you, ${name}.`);
-    const b = await panel({ title: 'Who are your work besties?', input: true, placeholder: 'e.g. Miguel, Bridgett',
-      skip: true, speak: 'Who are your work besties?' });
+    await sayAndWait(persona.reactToName(name));
+    const askB = persona.line('askBesties');
+    const b = await panel({ title: askB, input: true, placeholder: 'e.g. Miguel, Bridgett',
+      skip: true, speak: askB });
     const besties = b && b.button !== 'Skip' ? b.text : '';
     if (besties) {
       await saveIntro({ besties });
-      await sayAndWait('Ooh, they seem really nice!');
+      flourish('hearts', null, true);
+      await sayAndWait(persona.reactToBesties(besties));
     }
     const bestiesDone = brainOk ? brain.run({ prompt: 'Job: besties', model: MODELS.main, maxTurns: 25 }).then(loadPrefs) : Promise.resolve();
     // G: what the big brain found out
@@ -1680,9 +1748,9 @@
     for (const m of (s.missing || []).slice(0, 2)) {
       await sayAndWait(`To help with ${m.use}, I’ll need ${m.app}. You can connect it in the Claude app whenever you like!`);
     }
-    await sayAndWait('If anything’s wrong, just tell me and I’ll fix it.');
+    await sayAndWait(persona.line('fixIt'));
     // H: settling in
-    await sayAndWait(`Yay! I’m going to go get settled in. Click me whenever you need me, ${name}!`);
+    await sayAndWait(persona.line('settle', { name }));
     voice.chirp(null, 'happy');
     life.calmSince = Date.now() - SETTLE_MS + 8000;
     await loadPrefs();
@@ -1700,8 +1768,8 @@
     const bits = [];
     if (meetings) bits.push(`you’ve got ${meetings === 1 ? 'a meeting' : meetings + ' meetings'} coming up`);
     if (waiting) bits.push(`${waiting === 1 ? 'one thing needs' : waiting + ' things need'} you`);
-    await sayAndWait(bits.length ? `OK, I’m all caught up! ${bits.join(', and ').replace(/^./, (c) => c.toUpperCase())}.`
-      : 'All caught up, and nothing needs you right now. Nice!');
+    await sayAndWait(bits.length ? persona.line('caughtUp', { bits: bits.join(', and ').replace(/^./, (c) => c.toUpperCase()) })
+      : persona.line('allQuiet'));
   }
 
   // Tray "Start over (back to the egg)": for meeting him again. Forgets your
@@ -1716,6 +1784,7 @@
     setup = { stage: 'egg', crack: 0, summary: null, fresh: true };
     saveSetup();
     try { localStorage.removeItem('hatched'); } catch {}
+    persona.reroll();
     introRecord = {};
     eggAsked = false;
     setUserName('');
@@ -1849,7 +1918,16 @@
         await sleep(r ? 600 : 1500); // a beat to finish reading, or a glance if muted
         release();
       } else {
+        const ignored = first.how === 'nudge' && ((announced[first.it.id] || {}).nudges || 0) >= 2
+          && !['sweet', 'sleepy'].includes(persona.temperament());
         r = await voice.announce(text);
+        await sleep(120);
+        const pose = r && voice.isSpeaking() ? hold(ignored ? 'mad' : 'talk') : null;
+        if (pose) {
+          await sleep(280);
+          for (let waited = 0; voice.isSpeaking() && waited < 20000; waited += 200) await sleep(200);
+          pose();
+        }
       }
     } finally { speakBusy = false; }
     if (r === false) return; // too soon after the last line: next tick
@@ -2535,7 +2613,7 @@
     if (!hatched) { clickEgg(); return; }
     const opening = popEl.hidden;
     setPopover(opening);
-    if (opening) flourish('happy_wiggle', null);
+    if (opening) flourish(Math.random() < 0.25 ? 'hearts' : 'happy_wiggle', null);
   }
 
   // --- drag: press + >2px movement drags the window (moved by Rust, not
@@ -2722,13 +2800,11 @@
     await loadPrefs();
     if (prefs && !inWorkHours()) return;
     if (Math.random() > 0.6) return;
-    const lines = userName ? [`Morning, ${userName}!`, `Hi ${userName}!`, 'I’m back!'] : ['Hi!', 'I’m back!'];
-    let last = '';
-    try { last = localStorage.getItem('lastHello') || ''; } catch {}
-    const pickLine = lines.filter((l) => l !== last)[Math.floor(Math.random() * (lines.length - 1))] || lines[0];
-    try { localStorage.setItem('lastHello', pickLine); } catch {}
-    if (new Date().getHours() >= 12 && pickLine.startsWith('Morning')) return voice.say(`Hi ${userName}!`);
-    voice.say(pickLine);
+    let pickLine = persona.line('bootHi', { name: userName });
+    // no name yet, or not morning any more: keep it simple
+    if (!userName && /\{name\}|,\s*!|\s!$/.test(pickLine)) pickLine = 'Hi!';
+    if (new Date().getHours() >= 12 && pickLine.startsWith('Morning')) pickLine = userName ? `Hi ${userName}!` : 'Hi!';
+    voice.say(pickLine.replace(/\s+([!?.])/g, '$1'));
   }
 
   // Tauri host wiring
@@ -2763,6 +2839,21 @@
     });
     refreshTaskbar();
     setInterval(refreshTaskbar, 30000);
+    invoke('waiting_for_claude').then((w) => {
+      if (!w) return;
+      plog('waiting for Claude');
+      voice.setMuted(true);
+    }).catch(() => {});
+    listen('claude-opened', () => {
+      plog('Claude opened: out he comes');
+      voice.setMuted(false);
+      refreshTaskbar();
+      if (!hatched) return;
+      setTuck(false, true);
+      life.calmSince = Date.now();
+      flourish('wave', 1800, true);
+      setTimeout(bootHello, 1400);
+    });
     invoke('load_intro').then((v) => { if (v) { introRecord = v; if (v.name && !userName) setUserName(String(v.name)); } });
     loadPrefs(); // the taskbar can move, resize or auto-hide
     // listener FIRST, then the snapshot, so a stale snapshot can never
