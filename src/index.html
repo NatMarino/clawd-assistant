@@ -1057,7 +1057,7 @@
     if (!IS_TAURI || !onTaskbar() || life.dragging || !hatched || !chatEl.hidden) return;
     const tb = life.tb;
     const calm = !!derived && derived.state === 'idle' && popEl.hidden && askEl.hidden
-      && !feeding && !life.hovering;
+      && !feeding && !life.hovering && !voice.isSpeaking();
     if (!calm) {
       life.calmSince = now;
       if (life.walking) stopWalking();
@@ -2797,6 +2797,14 @@
   voice.onSpeaking((on, kind) => {
     pet.setSpeaking(on);
     pet.setSquint(on && kind === 'chirp');
+    // a peek already under way stops the moment he starts talking
+    if (on && kind === 'speech' && pet.state === 'peek') {
+      flourishToken++;
+      flourishing = false;
+      life.busy = false;
+      setTuck(false, true);
+      applyDerived();
+    }
   });
 
   const PECKISH_MS = 3 * 60 * 60 * 1000;
@@ -2875,7 +2883,7 @@
   //     restarts the nap clock. ---
   setInterval(() => {
     if (onTaskbar()) return; // on the taskbar, lifeTick does the peeking
-    if (pet.state !== 'idle' || !derived || derived.state !== 'idle' || Math.random() > 0.4) return;
+    if (pet.state !== 'idle' || !derived || derived.state !== 'idle' || voice.isSpeaking() || Math.random() > 0.4) return;
     flourish(Math.random() < 0.5 ? 'peek' : 'happy_wiggle', null);
   }, 4 * 60 * 1000);
 
