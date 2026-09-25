@@ -39,6 +39,28 @@ pub struct Proposal {
     pub draft_link: String,
 }
 
+/// Something the big brain wrote for the user to read (and maybe send): the
+/// full text, so clicking the item shows it, plus the run that wrote it, so
+/// "make it shorter" carries on the same conversation.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Default, Debug)]
+pub struct Draft {
+    #[serde(default)]
+    pub to: String,
+    #[serde(default)]
+    pub subject: String,
+    #[serde(default)]
+    pub body: String,
+    /// Gmail, Slack, Outlook… (empty: just text)
+    #[serde(default)]
+    pub app: String,
+    /// the saved draft in that app, when it could save one
+    #[serde(default)]
+    pub link: String,
+    /// the big brain session that wrote it
+    #[serde(default)]
+    pub session: String,
+}
+
 /// One thing Claude wants Claw'd to show. Everything but `id` is optional,
 /// because the writer is a language model following a skill, not a schema
 /// validator: a missing field gets a sensible default rather than a rejected
@@ -77,6 +99,9 @@ pub struct Item {
     pub rule: String,
     #[serde(default)]
     pub proposal: Option<Proposal>,
+    /// a draft he wrote for you (read it, change it, send it)
+    #[serde(default)]
+    pub draft: Option<Draft>,
     /// heartbeat only: the sweep interval, so staleness is judged against
     /// what the user actually scheduled
     #[serde(default)]
