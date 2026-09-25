@@ -7,6 +7,7 @@
 
 mod brain;
 mod feed;
+mod media;
 mod packs;
 mod platform;
 mod sessions;
@@ -93,6 +94,16 @@ struct PetConfig {
     /// Claude Code). On by default; the gear switches it off.
     #[serde(default = "yes")]
     start_with_claude: bool,
+    /// Home Assistant for the home pack: its address and a long-lived
+    /// access token (the big brain reaches it through HA's own MCP server)
+    #[serde(default)]
+    home_assistant: Option<HomeAssistant>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct HomeAssistant {
+    url: String,
+    token: String,
 }
 
 fn yes() -> bool {
@@ -101,7 +112,7 @@ fn yes() -> bool {
 
 impl Default for PetConfig {
     fn default() -> Self {
-        Self { x: None, y: None, scale: 1.75, feed: Default::default(), on_taskbar: true, start_with_claude: true }
+        Self { x: None, y: None, scale: 1.75, feed: Default::default(), on_taskbar: true, start_with_claude: true, home_assistant: None }
     }
 }
 
@@ -393,6 +404,55 @@ fn brain_stop(state: tauri::State<AppState>) {
     brain::stop(&state.brain);
 }
 
+/// Hand the big brain Home Assistant when the home pack is on and it's set
+/// up: an MCP config file in his app data (the token stays out of the Clawd
+/// folder), passed on every run.
+fn refresh_connections(state: &AppState) {
+    let dir = clawd_dir(state);
+    let home_on = packs::enabled(&dir).iter().any(|p| p == "home");
+    let ha = state.cfg.lock_or_recover().home_assistant.clone().filter(|h| !h.url.trim().is_empty() && !h.token.trim().is_empty());
+    let file = platform::app_data_dir().unwrap_or_else(std::env::temp_dir).join("connections.json");
+    let path = match (home_on, ha) {
+        (true, Some(h)) => {
+            let url = format!("{}/api/mcp", h.url.trim().trim_end_matches('/'));
+            let body = serde_json::json!({ "mcpServers": { "home-assistant": {
+                "type": "http", "url": url, "headers": { "Authorization": format!("Bearer {}", h.token.trim()) } } } });
+            std::fs::write(&file, serde_json::to_string_pretty(&body).unwrap_or_default()).ok().map(|_| file)
+        }
+        _ => {
+            let _ = std::fs::remove_file(&file);
+            None
+        }
+    };
+    *state.brain.mcp_config.lock_or_recover() = path;
+}
+
+/// Home Assistant's address (and whether a token is saved; the token itself
+/// never goes back to the page).
+#[tauri::command]
+fn get_home_assistant(state: tauri::State<AppState>) -> serde_json::Value {
+    let h = state.cfg.lock_or_recover().home_assistant.clone().unwrap_or_default();
+    serde_json::json!({ "url": h.url, "has_token": !h.token.is_empty() })
+}
+
+/// Save Home Assistant's address and token (an empty token keeps the saved
+/// one; an empty address forgets both).
+#[tauri::command]
+fn set_home_assistant(state: tauri::State<AppState>, url: String, token: String) {
+    {
+        let mut cfg = state.cfg.lock_or_recover();
+        let url = url.trim().to_string();
+        cfg.home_assistant = if url.is_empty() {
+            None
+        } else {
+            let keep = cfg.home_assistant.as_ref().map(|h| h.token.clone()).unwrap_or_default();
+            Some(HomeAssistant { url, token: if token.trim().is_empty() { keep } else { token.trim().to_string() } })
+        };
+    }
+    state.dirty.store(true, Ordering::Relaxed);
+    refresh_connections(&state);
+}
+
 /// Every pack in the Clawd folder, and which are on.
 #[tauri::command]
 fn list_packs(state: tauri::State<AppState>) -> Vec<packs::PackInfo> {
@@ -405,6 +465,7 @@ fn list_packs(state: tauri::State<AppState>) -> Vec<packs::PackInfo> {
 fn set_packs(app: tauri::AppHandle, state: tauri::State<AppState>, enabled: Vec<String>) -> bool {
     let dir = clawd_dir(&state);
     let ok = packs::set_enabled(&dir, &enabled);
+    refresh_connections(&state);
     if packs::list(&dir).iter().any(|p| p.enabled && p.sessions) {
         sessions::ensure_started(&app);
     }
@@ -775,7 +836,7 @@ fn main() {
             set_opaque_bounds, start_drag, end_drag, set_pet_scale, get_pet_scale, quit_app,
             open_link, ask_claude, taskbar_info, go_to_taskbar, walk_to, stop_walk, report_anchor, save_intro, load_intro,
             brain_status, brain_run, brain_stop, brain_open, read_prefs, add_local_items, page_log,
-            waiting_for_claude, get_start_with_claude, set_start_with_claude, list_packs, set_packs, get_sessions, set_hooks,
+            waiting_for_claude, get_start_with_claude, set_start_with_claude, list_packs, set_packs, get_sessions, set_hooks, get_home_assistant, set_home_assistant,
             state::get_pet_state, state::dismiss_item, state::hand_off_item
         ])
         .setup(move |app| {
@@ -828,6 +889,7 @@ fn main() {
             // failure just leaves the default behaviour.
             platform::quiet_browser_keys(&win);
             let saved = state.cfg.lock_or_recover().clone();
+            refresh_connections(&state);
 
             // Restore scale, then position (clamped: only if the saved point
             // still lands on a live monitor), then show — no flash-then-jump.

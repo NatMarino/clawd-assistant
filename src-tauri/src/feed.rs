@@ -258,6 +258,36 @@ pub fn spawn_http(
     Ok(())
 }
 
+/// ?token=… in a webhook URL (for apps that can't send a header)
+fn query_token(url: &str) -> Option<String> {
+    let q = url.split_once('?')?.1;
+    q.split('&').find_map(|kv| kv.strip_prefix("token=")).map(|t| t.trim().to_string())
+}
+
+/// The password of "Authorization: Basic …" (Sonarr and Radarr's webhook
+/// username/password fields): any username, the token as the password.
+fn basic_password(value: &str) -> Option<String> {
+    let b64 = value.strip_prefix("Basic ")?.trim();
+    let bytes = base64_decode(b64)?;
+    let text = String::from_utf8(bytes).ok()?;
+    text.split_once(':').map(|(_, p)| p.to_string())
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::new();
+    let (mut buf, mut bits) = (0u32, 0u32);
+    for c in s.bytes().filter(|c| *c != b'=') {
+        buf = (buf << 6) | T.iter().position(|x| *x == c)? as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
 fn header<'a>(req: &'a tiny_http::Request, name: &str) -> Option<&'a str> {
     req.headers()
         .iter()
@@ -286,12 +316,14 @@ fn serve(mut req: tiny_http::Request, tx: &Sender<PetEvent>, store: &Mutex<PetSt
     if header(&req, "Origin").is_some() {
         return respond(req, 403, r#"{"error":"browser requests are not accepted"}"#.into());
     }
+    let is_hook = path.starts_with("/hooks/");
     let presented = header(&req, "Authorization")
         .and_then(|v| v.strip_prefix("Bearer "))
         .or_else(|| header(&req, "X-Clawd-Token"))
-        .unwrap_or("")
-        .trim()
-        .to_string();
+        .map(|t| t.trim().to_string())
+        .or_else(|| if is_hook { query_token(req.url()) } else { None })
+        .or_else(|| if is_hook { basic_password(header(&req, "Authorization").unwrap_or("")) } else { None })
+        .unwrap_or_default();
     if token.is_empty() || presented != token {
         return respond(req, 401, r#"{"error":"missing or wrong token (see http.json in the Clawd folder)"}"#.into());
     }
@@ -311,11 +343,47 @@ fn serve(mut req: tiny_http::Request, tx: &Sender<PetEvent>, store: &Mutex<PetSt
                 Err(e) => respond(req, 400, serde_json::json!({ "error": e }).to_string()),
             }
         }
+        // home apps' own webhooks (media.rs): /hooks/sonarr, /hooks/radarr,
+        // /hooks/overseerr, /hooks/plex
+        (tiny_http::Method::Post, p) if p.starts_with("/hooks/") => {
+            let app = p.trim_start_matches("/hooks/").trim_end_matches('/').to_ascii_lowercase();
+            let ctype = header(&req, "Content-Type").unwrap_or("").to_string();
+            let mut body = String::new();
+            if req.as_reader().take(MAX_BODY).read_to_string(&mut body).is_err() {
+                return respond(req, 400, r#"{"error":"unreadable body"}"#.into());
+            }
+            match crate::media::translate(&app, &body, &ctype) {
+                Ok(None) => respond(req, 200, r#"{"accepted":0,"note":"nothing to show for that one"}"#.into()),
+                Ok(Some(batch)) => match parse_batch(&batch.to_string()) {
+                    Ok(items) => {
+                        let n = items.len();
+                        let _ = tx.send(PetEvent::Items(items, "http"));
+                        respond(req, 200, format!(r#"{{"accepted":{n}}}"#))
+                    }
+                    Err(e) => respond(req, 400, serde_json::json!({ "error": e }).to_string()),
+                },
+                Err(e) => respond(req, 400, serde_json::json!({ "error": e }).to_string()),
+            }
+        }
         (tiny_http::Method::Get, "/state") => {
             let snap = store.lock_or_recover().clone();
             respond(req, 200, serde_json::to_string(&snap).unwrap_or_else(|_| "{}".into()))
         }
         _ => respond(req, 404, r#"{"error":"not found"}"#.into()),
+    }
+}
+
+#[cfg(test)]
+mod hook_auth_tests {
+    use super::*;
+
+    #[test]
+    fn webhook_tokens() {
+        assert_eq!(query_token("/hooks/sonarr?token=abc123&x=1").as_deref(), Some("abc123"));
+        assert_eq!(query_token("/hooks/sonarr").as_deref(), None);
+        // "clawd:abc123"
+        assert_eq!(basic_password("Basic Y2xhd2Q6YWJjMTIz").as_deref(), Some("abc123"));
+        assert_eq!(basic_password("Bearer x").as_deref(), None);
     }
 }
 

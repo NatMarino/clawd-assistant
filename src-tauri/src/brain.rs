@@ -252,6 +252,9 @@ pub struct Brain {
     /// after Claude's start-up list is written, so that list alone misses
     /// them; the refusals name them exactly.
     pub learned: Mutex<Option<Vec<String>>>,
+    /// extra app connections for the big brain (--mcp-config): Home
+    /// Assistant, when the home pack is on and it's set up
+    pub mcp_config: Mutex<Option<PathBuf>>,
 }
 
 fn learned_path() -> Option<PathBuf> {
@@ -427,7 +430,11 @@ pub fn spawn_run(app: AppHandle, brain: Arc<Brain>, dir: PathBuf, spec: RunSpec)
                 if attempt > 0 { " carrying on" } else { "" }));
             let tools = brain.tools.lock_or_recover().clone();
             let known = learned(&brain);
-            let mut child = match command(&exe, &dir, &spec, &tools, &known).spawn() {
+            let mut cmd = command(&exe, &dir, &spec, &tools, &known);
+            if let Some(p) = brain.mcp_config.lock_or_recover().clone() {
+                cmd.arg("--mcp-config").arg(p);
+            }
+            let mut child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
                     log(&format!("run {}: could not start: {e}", spec.job));
@@ -558,7 +565,11 @@ pub fn probe(brain: &Brain, dir: &Path, model: &str, secs: u64) -> Status {
     let _turn = brain.turn.lock_or_recover();
     let tools = brain.tools.lock_or_recover().clone();
     let known = learned(brain);
-    let mut child = match command(&exe, dir, &spec, &tools, &known).spawn() {
+    let mut cmd = command(&exe, dir, &spec, &tools, &known);
+    if let Some(p) = brain.mcp_config.lock_or_recover().clone() {
+        cmd.arg("--mcp-config").arg(p);
+    }
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
             log(&format!("probe: could not start: {e}"));

@@ -347,6 +347,9 @@
   <div id="packs-row" class="theme-row" hidden>
     <span class="lbl">packs:</span>
   </div>
+  <div id="ha-row" class="theme-row" hidden>
+    <button id="ha-btn" title="So the big brain can check and control your smart home">home assistant…</button>
+  </div>
   <div id="custom-row" class="theme-row" hidden>
     <button id="custom-btn">customize how I look and sound…</button>
   </div>
@@ -598,7 +601,29 @@
   // (skin, voice, pitch and size live in the picker it opens, the same one
   // as during setup)
   const packsRow = document.getElementById('packs-row');
-  const SETTINGS_ROWS = [modeRow, themeRow, startRow, packsRow, customRow];
+  const haRow = document.getElementById('ha-row');
+  const SETTINGS_ROWS = [modeRow, themeRow, startRow, packsRow, haRow, customRow];
+  if (!IS_TAURI) haRow.remove();
+  // Home Assistant: its address, then a long-lived access token (made in
+  // HA under your profile → Security). The token goes to Rust and never
+  // comes back to the page.
+  document.getElementById('ha-btn').onclick = async (e) => {
+    e.stopPropagation();
+    setPopover(false);
+    let cur = { url: '', has_token: false };
+    try { cur = await invoke('get_home_assistant'); } catch {}
+    const u = await panel({ title: 'Where’s your Home Assistant?', sub: 'Its address, like http://10.0.17.103:8123. Leave it blank to disconnect.',
+      input: true, placeholder: cur.url || 'http://homeassistant.local:8123', buttons: [{ label: 'Next', primary: true }] });
+    if (!u) return;
+    const url = (u.text || cur.url || '').trim();
+    if (!url) { await invoke('set_home_assistant', { url: '', token: '' }); voice.say('Okay, I let go of Home Assistant.'); return; }
+    const t = await panel({ title: 'And a long-lived access token',
+      sub: cur.has_token ? 'Leave it blank to keep the one I have. (In Home Assistant: your profile → Security → Long-lived access tokens.)' : 'In Home Assistant: your profile → Security → Long-lived access tokens → Create token.',
+      input: true, secret: true, placeholder: 'Paste the token', buttons: [{ label: 'Save', primary: true }] });
+    if (!t) return;
+    await invoke('set_home_assistant', { url, token: t.text || '' });
+    voice.say('Got it! I can talk to your Home Assistant now. Make sure the home pack is on.');
+  };
   // what he's for: one button per pack in the Clawd folder, on or off
   async function renderPacks() {
     if (!IS_TAURI) { packsRow.remove(); return; }
@@ -1332,7 +1357,7 @@
     chatEl.style.bottom = aboveBuddyBottomCss(10);
   }
   function panel({ title, sub = '', chips = null, multi = false, other = false, input = false,
-    placeholder = '', buttons = [], skip = false, muffled = false, speak = null,
+    placeholder = '', buttons = [], skip = false, muffled = false, speak = null, secret = false,
     selected = [], onChip = null } = {}) {
     return new Promise((resolve) => {
       if (panelResolve) panelResolve(null);
@@ -1378,6 +1403,7 @@
       chatChips.hidden = !(chips || other);
       chatInput.hidden = !input;
       chatInput.value = '';
+      chatInput.type = secret ? 'password' : 'text';
       chatInput.placeholder = placeholder;
       chatHint.hidden = !input;
       const answer = (button) => {
