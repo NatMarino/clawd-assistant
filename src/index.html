@@ -2736,12 +2736,15 @@
   });
 
   const PECKISH_MS = 3 * 60 * 60 * 1000;
-  const BITE_MS = 333;
-  // the eating clip's three bites (both skins): monch, monch, monch
-  const MUNCH_MS = [333, 500, 667];
-  // ...and the happy bounce after the last one
-  const YUM_MS = 820;
-  const MEAL_MS = 1334;
+  // Nat's eat animation (5.1 s, both skins) holds its own cookie from the
+  // first frame, so the dropped treat hands over as soon as he starts. Three
+  // bites, the cookie shrinking at frames 7-10, 19-22 and 31-34: a monch as
+  // each bite goes in and another as he chews it off.
+  const BITE_MS = 60;
+  const MUNCH_MS = [700, 1000, 1900, 2200, 3100, 3400];
+  // ...and a happy chirp once the last crumb is gone
+  const YUM_MS = 3650;
+  const MEAL_MS = 5100;
   const STRANDED_MS = 3000;
 
   let feeding = false;
