@@ -319,6 +319,11 @@ fn allowed_tools(tools: &[String], learned: &[String], also: &[String]) -> Vec<S
 /// print mode, so it isn't an option.
 const SYSTEM_LINE: &str = "You are the big brain behind Claw'd, a desktop assistant pet. The first message starts with your full instructions in a <clawd-instructions> block: follow them.";
 
+/// Where each run's approvals go (runs take turns, so one file is enough).
+fn run_settings_path() -> PathBuf {
+    crate::platform::app_data_dir().unwrap_or_else(std::env::temp_dir).join("run-settings.json")
+}
+
 /// What goes in on standard input: the instructions (first message of a
 /// conversation only), then the job.
 fn stdin_payload(spec: &RunSpec) -> String {
@@ -361,7 +366,17 @@ fn command(exe: &Path, dir: &Path, spec: &RunSpec, tools: &[String], learned: &[
     if spec.mode == "plan" {
         c.args(["--permission-mode", "plan"]);
     } else {
-        c.args(["--allowedTools", &allowed_tools(tools, learned, &spec.also_allow).join(",")]);
+        // In a settings file, not on the command line: with every app a
+        // work account connects, the tool list alone can pass Windows' ~32k
+        // command-line limit (the work laptop's 10:43 check, 2026-09-25).
+        let allow = allowed_tools(tools, learned, &spec.also_allow);
+        let file = run_settings_path();
+        let body = serde_json::json!({ "permissions": { "allow": allow } });
+        if std::fs::write(&file, body.to_string()).is_ok() {
+            c.arg("--settings").arg(&file);
+        } else {
+            c.args(["--allowedTools", &allow.join(",")]);
+        }
     }
     if let Some(r) = spec.resume.as_deref().filter(|r| !r.is_empty()) {
         c.args(["--resume", r]);
@@ -671,6 +686,18 @@ mod tests {
         for no in ["mcp__claude_ai_Slack__slack_send_message", "mcp__claude_ai_Gmail__send_email", "mcp__claude_ai_Google_Calendar__create_event", "Bash", "WebFetch", "Write"] {
             assert!(!safe_to_learn(no), "{no}");
         }
+    }
+
+    #[test]
+    fn the_command_line_stays_short() {
+        let tools: Vec<String> = (0..2000).map(|i| format!("mcp__claude_ai_Some_Long_Connector_Name__a_fairly_long_tool_name_{i}")).collect();
+        let spec = RunSpec {
+            job: "j".into(), prompt: "Job: sweep".into(), system: "x".repeat(60_000), model: "claude-haiku-4-5-20251001".into(),
+            mode: "auto".into(), resume: None, also_allow: vec![], max_turns: 40,
+        };
+        let c = command(Path::new("claude.exe"), &std::env::temp_dir(), &spec, &tools, &[]);
+        let len: usize = c.get_args().map(|a| a.len() + 1).sum();
+        assert!(len < 2000, "command line is {len} chars");
     }
 
     #[test]
