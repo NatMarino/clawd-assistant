@@ -44,10 +44,13 @@ him propose everything. Nothing is ever sent by a scheduled check.
 **Windows 11 and macOS 11+.** Download the latest from
 [Releases](https://github.com/NatMarino/clawd-assistant/releases): the
 `-setup.exe` for Windows, the `.dmg` for a Mac (Apple silicon or Intel). Neither
-is signed yet. On Windows, SmartScreen says "Windows protected your PC": click
-*More info*, then *Run anyway*. On a Mac, drag Claw'd to Applications, then the
-first time right-click him and choose **Open** (or System Settings → Privacy &
-Security → **Open Anyway**).
+is signed. On Windows, SmartScreen says "Windows protected your PC": click
+*More info*, then *Run anyway*. On a Mac, drag Claw'd to Applications and open
+him once. macOS refuses ("could not verify…"): click **Done**, then go to System
+Settings → Privacy & Security, scroll down, and click **Open Anyway** next to
+ClawdAssistant. If it says the app is "damaged" instead, run this once in
+Terminal, then open him again:
+`xattr -dr com.apple.quarantine /Applications/ClawdAssistant.app`
 
 ## Setting it up
 

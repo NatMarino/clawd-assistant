@@ -5,8 +5,8 @@
 # a pre-release, never the "latest" that SETUP.md and coworkers download.
 #
 # Nothing is signed. Windows: SmartScreen warns ("More info" -> "Run anyway").
-# Mac: right-click the app -> Open the first time (or System Settings ->
-# Privacy & Security -> Open Anyway).
+# Mac: open it once, then System Settings -> Privacy & Security -> Open Anyway
+# (right-click -> Open no longer works on macOS 15+).
 name: release
 
 on:
@@ -66,8 +66,11 @@ jobs:
 
             **macOS 11 or later** (Apple silicon and Intel)
             - `ClawdAssistant_*_universal.dmg`: open it, drag Claw'd to Applications
-            - Unsigned: the first time, right-click the app and choose **Open**
-              (or System Settings → Privacy & Security → **Open Anyway**).
+            - Unsigned: open it once and macOS refuses. Click **Done**, then System
+              Settings → Privacy & Security → scroll down → **Open Anyway**.
+            - If it says "damaged" instead, run this once in Terminal:
+              `xattr -dr com.apple.quarantine /Applications/ClawdAssistant.app`
+            - The Claude app must be installed and signed in first.
 
             `clawd-skill.zip` is the clawd skill, for Claude's Capabilities → Skills.
 
