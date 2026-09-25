@@ -567,12 +567,48 @@ function animalese(text, { muffled = false } = {}) {
     nodes.push(src);
   };
 
+  // WORDS, not a stream of letters: each word is one little burst. Its
+  // letters run together (closer, each ringing slightly into the next), the
+  // word has its own pitch (seeded by the word, so it sounds the same every
+  // time) and a small rise-and-fall across it, its first sound is a touch
+  // louder and its last a touch longer, and a real pause follows it.
+  const WITHIN = 0.78;  // letters in a word come this much closer together
+  const LEGATO = 1.25;  // ...and each rings a little past the next one's start
+  const WORD_GAP = 0.1; // the pause between words
+  const isLetter = (c) => /[a-z0-9]/.test(c);
+  const words = [];     // per word: the indexes of its letters
+  const wordOf = [];    // per letter index: its word, or -1
+  for (let i = 0, w = -1, inWord = false; i < n; i++) {
+    if (isLetter(letters[i])) {
+      if (!inWord) { words.push([]); w = words.length - 1; inWord = true; }
+      words[w].push(i);
+      wordOf[i] = w;
+    } else {
+      wordOf[i] = -1;
+      // an apostrophe keeps "I'm" one word
+      if (!(letters[i] === "'" || letters[i] === '’')) inWord = false;
+    }
+  }
+  const wordPitch = words.map((idx) => {
+    if (flav.even) return 1;
+    let h = 7;
+    for (const i of idx) h = (h * 31 + letters[i].charCodeAt(0)) % 997;
+    return 1 + ((h % 13) / 12 - 0.5) * 0.14 * (flav.jump || 1);
+  });
+
   letters.forEach((ch, i) => {
-    // the pitch contour: each letter a little different (seeded by the
-    // letter, so the same word sounds the same), falling gently through the
-    // sentence, rising over the last few letters of a question. His
-    // temperament shapes it: how far letters jump, how even, how wide.
-    const seed = flav.even ? 0 : ((ch.charCodeAt(0) * 37 + i * 11) % 23) / 23 - 0.5;
+    // the pitch contour: the word's own pitch and arc, a little variation
+    // letter to letter, falling gently through the sentence, rising over the
+    // last few letters of a question. His temperament shapes it: how far
+    // things jump, how even, how wide.
+    const w = wordOf[i];
+    const idx = w >= 0 ? words[w] : null;
+    const pos = idx ? idx.indexOf(i) : 0;
+    const len = idx ? idx.length : 1;
+    const arc = idx ? 1 + 0.07 * Math.sin(Math.PI * (pos + 0.5) / len) : 1;
+    const accent = pos === 0 ? 1.15 : 1;
+    const hold = pos === len - 1 ? 1.3 : 1; // the word's last sound lingers
+    const seed = flav.even ? 0 : (((ch.charCodeAt(0) * 37 + i * 11) % 23) / 23 - 0.5) * 0.4;
     const fallBy = flav.falling ? 0.25 : 0.12;
     const fall = 1 - fallBy * (i / Math.max(1, n));
     const tail = i > n - 5 ? i - (n - 5) : 0;
@@ -582,27 +618,26 @@ function animalese(text, { muffled = false } = {}) {
     else if (flav.upturn && tail) lift = 1 + 0.05 * tail;
     // from the egg: a slow wobble, as if the shell were rocking
     const wob = muffled ? 1 + 0.05 * Math.sin(2 * Math.PI * 6 * (t - t0)) : 1;
-    const f0 = f0Base * (1 + seed * 0.14 * (flav.jump || 1)) * fall * lift * wob;
-    const step = (d) => { t += d * stretch; };
-    if (ch === ' ') { step(0.035); return; }
-    if (ch === ',' || ch === '-') { step(0.12); return; }
-    if (ch === '.' || ch === '!' || ch === '?') { step(0.2); return; }
+    const f0 = f0Base * (w >= 0 ? wordPitch[w] : 1) * arc * (1 + seed * 0.14 * (flav.jump || 1)) * fall * lift * wob;
+    // inside a word, letters come closer; after its last one, the word gap
+    const step = (d) => { t += d * stretch * (idx ? WITHIN : 1); };
+    const endWord = () => { if (idx && pos === len - 1) t += WORD_GAP * stretch; };
+    const sound = (dur, freq, formants, level) => voiced(t, dur * stretch * LEGATO * hold, freq, formants, level * accent);
+    if (ch === ' ') return; // the word gap already happened
+    if (ch === ',' || ch === '-') { t += 0.12 * stretch; return; }
+    if (ch === '.' || ch === '!' || ch === '?') { t += 0.2 * stretch; return; }
     if (ch === "'" || ch === '’') return;
-    if (/[0-9]/.test(ch)) { voiced(t, 0.06 * stretch, f0, SCHWA); step(0.066); return; }
-    if (VOWELS[ch]) { voiced(t, 0.066 * stretch, f0, VOWELS[ch]); step(0.068); return; }
+    if (/[0-9]/.test(ch)) sound(0.06, f0, SCHWA, 1), step(0.066);
+    else if (VOWELS[ch]) sound(0.066, f0, VOWELS[ch], 1), step(0.068);
     // Consonants are pitched blips too, never noise: noise bursts under the
     // vowels were the "crunch". A hiss is a short, bright, slightly higher
     // blip; a click a very short one with a quick drop in pitch.
-    if (HISS[ch]) { voiced(t, 0.038 * stretch, f0 * 1.12, [450, Math.min(3200, HISS[ch][0] * 0.5)], 0.4); step(0.045); return; }
-    if (CLICK[ch]) {
-      voiced(t, 0.03 * stretch, f0 * (CLICK[ch][1] ? 0.95 : 1.05), [550, Math.min(2600, CLICK[ch][0])], CLICK[ch][1] ? 0.65 : 0.5);
-      step(0.042);
-      return;
-    }
-    if (HUM[ch]) { voiced(t, 0.048 * stretch, f0, HUM[ch], 0.7); step(0.05); return; }
-    if (GLIDE[ch]) { voiced(t, 0.048 * stretch, f0, GLIDE[ch], 0.8); step(0.05); return; }
-    voiced(t, 0.045 * stretch, f0, SCHWA, 0.6);
-    step(0.047);
+    else if (HISS[ch]) sound(0.038, f0 * 1.12, [450, Math.min(3200, HISS[ch][0] * 0.5)], 0.4), step(0.045);
+    else if (CLICK[ch]) sound(0.03, f0 * (CLICK[ch][1] ? 0.95 : 1.05), [550, Math.min(2600, CLICK[ch][0])], CLICK[ch][1] ? 0.65 : 0.5), step(0.042);
+    else if (HUM[ch]) sound(0.048, f0, HUM[ch], 0.7), step(0.05);
+    else if (GLIDE[ch]) sound(0.048, f0, GLIDE[ch], 0.8), step(0.05);
+    else sound(0.045, f0, SCHWA, 0.6), step(0.047);
+    endWord();
   });
 
   // the sound itself ends at t (plus the last letter's release)
