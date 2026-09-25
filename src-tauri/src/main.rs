@@ -9,6 +9,7 @@ mod brain;
 mod feed;
 mod packs;
 mod platform;
+mod sessions;
 mod state;
 mod taskbar;
 
@@ -398,10 +399,29 @@ fn list_packs(state: tauri::State<AppState>) -> Vec<packs::PackInfo> {
     packs::list(&clawd_dir(&state))
 }
 
-/// Turn packs on and off (the gear, and setup).
+/// Turn packs on and off (the gear, and setup). A pack that listens for
+/// Claude Code sessions (dev) starts the hook door.
 #[tauri::command]
-fn set_packs(state: tauri::State<AppState>, enabled: Vec<String>) -> bool {
-    packs::set_enabled(&clawd_dir(&state), &enabled)
+fn set_packs(app: tauri::AppHandle, state: tauri::State<AppState>, enabled: Vec<String>) -> bool {
+    let dir = clawd_dir(&state);
+    let ok = packs::set_enabled(&dir, &enabled);
+    if packs::list(&dir).iter().any(|p| p.enabled && p.sessions) {
+        sessions::ensure_started(&app);
+    }
+    ok
+}
+
+/// Claude Code sessions right now (the dev pack).
+#[tauri::command]
+fn get_sessions(store: tauri::State<sessions::SessionsStore>) -> sessions::SessionsPayload {
+    store.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Point Claude Code's hooks at him (on) or take them out (off). Edits
+/// ~/.claude/settings.json, keeping a backup the first time.
+#[tauri::command]
+fn set_hooks(on: bool) -> Result<(), String> {
+    if on { sessions::install_hooks() } else { sessions::remove_hooks() }
 }
 
 /// The one-time things only a person can do, in the big brain's own window:
@@ -755,7 +775,7 @@ fn main() {
             set_opaque_bounds, start_drag, end_drag, set_pet_scale, get_pet_scale, quit_app,
             open_link, ask_claude, taskbar_info, go_to_taskbar, walk_to, stop_walk, report_anchor, save_intro, load_intro,
             brain_status, brain_run, brain_stop, brain_open, read_prefs, add_local_items, page_log,
-            waiting_for_claude, get_start_with_claude, set_start_with_claude, list_packs, set_packs,
+            waiting_for_claude, get_start_with_claude, set_start_with_claude, list_packs, set_packs, get_sessions, set_hooks,
             state::get_pet_state, state::dismiss_item, state::hand_off_item
         ])
         .setup(move |app| {
@@ -778,6 +798,12 @@ fn main() {
             };
             feed::spawn_folder_watch(inbox_dir.clone(), tx.clone());
             app.manage(state::PetStateStore(store));
+            app.manage(sessions::SessionsStore(Mutex::new(sessions::SessionsPayload { state: "none".into(), ..Default::default() })));
+            // the dev pack listens for Claude Code sessions
+            let clawd = inbox_dir.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+            if packs::list(&clawd).iter().any(|p| p.enabled && p.sessions) {
+                sessions::ensure_started(app.handle());
+            }
             app.manage(state::EventSender(Mutex::new(tx)));
             let base = state::PetStatePayload {
                 sweep_minutes: feed_cfg.sweep_minutes.max(1),

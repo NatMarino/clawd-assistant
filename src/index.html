@@ -604,6 +604,7 @@
     let list = [];
     try { list = await invoke('list_packs'); } catch {}
     packsRow.querySelectorAll('button').forEach((b) => b.remove());
+    devOn = list.some((p) => p.enabled && p.sessions);
     for (const p of list) {
       const b = document.createElement('button');
       b.textContent = p.name.toLowerCase();
@@ -614,6 +615,8 @@
         p.enabled = !p.enabled;
         b.classList.toggle('active', p.enabled);
         await invoke('set_packs', { enabled: list.filter((x) => x.enabled).map((x) => x.id) }).catch(() => {});
+        devOn = list.some((x) => x.enabled && x.sessions);
+        tick(); renderPopover();
         voice.say(p.enabled ? `Okay! I’ll help with ${p.name.toLowerCase()} stuff too.` : `Okay, no more ${p.name.toLowerCase()} stuff.`);
       };
       packsRow.appendChild(b);
@@ -891,6 +894,19 @@
   }
 
   function derive(p, now) {
+    return withSessions(deriveOffice(p, now));
+  }
+  // Claude Code sessions (dev pack): a session that needs you counts like a
+  // waiting item; working and thinking show when nothing else is going on
+  function withSessions(r) {
+    if (!hatched || !devOn || !sess || sess.state === 'none') return r;
+    const s = sess.state;
+    const busyOffice = r.state === 'needs_input' || r.state === 'clock';
+    if ((s === 'needs_input' || s === 'error') && !busyOffice) return { ...r, state: s, detail: sess.project, session: true };
+    if (r.state === 'idle' && (s === 'working' || s === 'thinking' || s === 'done')) return { ...r, state: s, session: true };
+    return r;
+  }
+  function deriveOffice(p, now) {
     // before he hatches: an egg, which cracks as setup goes (eggState)
     if (!hatched) return { state: eggState(), count: 0 };
     if (!p) return { state: IS_TAURI ? 'sleeping' : 'idle' };
@@ -1641,6 +1657,7 @@
     const out = { where, uses, apps: chips.filter((c) => uses.includes(c.use) && (c.apps || c.app)).map((c) => c.apps || c.app) };
     // what he's for, from here on
     if (IS_TAURI) await invoke('set_packs', { enabled: persona.packsFor(where, uses) }).catch(() => {});
+    renderPacks();
     await eggReact(persona.reactToUses(uses, otherText), otherText ? 2400 : 1700);
     if (uses.includes('messages')) {
       const m = await panel({ title: 'Which messages matter most?', chips: ['DMs', 'Mentions', 'A few channels'], multi: true,
@@ -2062,6 +2079,7 @@
     const open = inbox.items.filter((it) => !it.handed_off);
     const upcoming = open.filter((it) => it.kind === 'reminder' && !needsYou(it, now))
       .sort((a, b) => (a.due_ms || 0) - (b.due_ms || 0));
+    renderSessions();
     const groups = [
       ['Waiting on you', att],
       ['Coming up', upcoming],
@@ -2080,11 +2098,105 @@
       popItems.appendChild(h);
       for (const it of list) popItems.appendChild(itemRow(it, now));
     }
-    if (!any) {
+    if (!any && !(devOn && sess && sess.sessions.length)) {
       const e = document.createElement('div');
       e.className = 'empty';
       e.textContent = 'Nothing yet. I’ll show you whatever the big brain finds.';
       popItems.appendChild(e);
+    }
+  }
+
+  // --- Claude Code sessions (the dev pack): the hook feed from Rust
+  //     (sessions.rs). He reacts when one needs you, finishes, or breaks. ---
+  let sess = null;
+  let devOn = false;
+  const SESS_LABEL = { needs_input: 'needs you', error: 'hit a snag', working: 'working', thinking: 'thinking', done: 'done', idle: 'idle' };
+  const SESS_COLOR = { needs_input: '#e89478', error: '#d8452c', working: '#c9a15f', thinking: '#8fb3c9', done: '#9ab98f', idle: '#8a8a8a' };
+  let sessSeen = {};
+  // a line about a session, when he can get a word in (retries a few times)
+  function sessSay(text, tries = 6) {
+    if (!text) return;
+    voice.announce(text).then((r) => {
+      if (r === false && tries > 0) setTimeout(() => sessSay(text, tries - 1), 2500);
+      else if (r) showToast(text);
+    });
+  }
+  function onSessions(p) {
+    const next = {};
+    for (const s of p.sessions || []) {
+      next[s.id] = s.state;
+      const was = sessSeen[s.id];
+      if (!hatched || !devOn || was === s.state || was === undefined && s.state === 'idle') continue;
+      const project = s.project || 'your session';
+      if (s.state === 'needs_input') sessSay(persona.line('sessAsk', { project }));
+      else if (s.state === 'done' && (was === 'working' || was === 'thinking')) { sessSay(persona.line('sessDone', { project })); flourish('happy_wiggle', null); }
+      else if (s.state === 'error') sessSay(persona.line('sessError', { project }));
+    }
+    sessSeen = next;
+    sess = p;
+    tick();
+    renderPopover();
+  }
+  function renderSessions() {
+    if (!devOn || !sess) return;
+    const list = sess.sessions || [];
+    if (!list.length && sess.hooks_installed && sess.listening) return;
+    const h = document.createElement('div');
+    h.className = 'sec';
+    h.textContent = 'Claude Code';
+    popItems.appendChild(h);
+    if (!sess.listening) {
+      const e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = 'Another Claw’d is already listening for sessions (the old coding one?). Quit it, then restart me.';
+      popItems.appendChild(e);
+      return;
+    }
+    if (!sess.hooks_installed) {
+      const row = document.createElement('div');
+      row.className = 'empty';
+      row.textContent = 'I can’t see your coding sessions yet. ';
+      const b = document.createElement('button');
+      b.className = 'mini go';
+      b.textContent = 'Connect me to Claude Code';
+      b.title = 'Adds my hooks to ~/.claude/settings.json (keeps a backup)';
+      b.onclick = async (e) => {
+        e.stopPropagation();
+        try { await invoke('set_hooks', { on: true }); sessSay(persona.line('hooksOn'), 1); b.textContent = 'Connected ✓'; b.disabled = true; }
+        catch (err) { b.textContent = 'Couldn’t: ' + String(err).slice(0, 60); }
+      };
+      row.appendChild(b);
+      popItems.appendChild(row);
+    }
+    const order = ['needs_input', 'error', 'working', 'thinking', 'done', 'idle'];
+    for (const s of [...list].sort((a, b) => order.indexOf(a.state) - order.indexOf(b.state))) {
+      const row = document.createElement('div');
+      row.className = 'sess nolink';
+      row.title = s.cwd;
+      const top = document.createElement('div');
+      top.className = 'top';
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = SESS_COLOR[s.state] || SESS_COLOR.idle;
+      const name = document.createElement('span');
+      name.className = 'proj';
+      name.textContent = s.project || 'session';
+      const pill = document.createElement('span');
+      pill.className = 'surface';
+      pill.textContent = SESS_LABEL[s.state] || s.state;
+      const age = document.createElement('span');
+      age.className = 'age';
+      age.textContent = fmtAge(s.since_ms);
+      top.append(dot, name, pill, age);
+      row.appendChild(top);
+      if (s.detail) {
+        const d = document.createElement('div');
+        d.className = 'detail';
+        d.textContent = s.detail;
+        d.title = s.detail;
+        row.appendChild(d);
+      }
+      popItems.appendChild(row);
     }
   }
 
@@ -2896,6 +3008,8 @@
       plog('waiting for Claude');
       voice.setMuted(true);
     }).catch(() => {});
+    listen('sessions', (e) => onSessions(e.payload));
+    invoke('get_sessions').then((p) => { if (p && !sess) onSessions(p); }).catch(() => {});
     listen('claude-opened', () => {
       plog('Claude opened: out he comes');
       voice.setMuted(false);
