@@ -607,9 +607,9 @@
   // Home Assistant: its address, then a long-lived access token (made in
   // HA under your profile → Security). The token goes to Rust and never
   // comes back to the page.
-  document.getElementById('ha-btn').onclick = async (e) => {
-    e.stopPropagation();
-    setPopover(false);
+  const haBtn = document.getElementById('ha-btn'); // gone outside the app
+  if (haBtn) haBtn.onclick = (e) => { e.stopPropagation(); setPopover(false); connectHomeAssistant(); };
+  async function connectHomeAssistant() {
     let cur = { url: '', has_token: false };
     try { cur = await invoke('get_home_assistant'); } catch {}
     const u = await panel({ title: 'Where’s your Home Assistant?', sub: 'Its address, like http://10.0.17.103:8123. Leave it blank to disconnect.',
@@ -622,8 +622,8 @@
       input: true, secret: true, placeholder: 'Paste the token', buttons: [{ label: 'Save', primary: true }] });
     if (!t) return;
     await invoke('set_home_assistant', { url, token: t.text || '' });
-    voice.say('Got it! I can talk to your Home Assistant now. Make sure the home pack is on.');
-  };
+    await sayAndWait('Got it! I can talk to your Home Assistant now.');
+  }
   // what he's for: one button per pack in the Clawd folder, on or off
   async function renderPacks() {
     if (!IS_TAURI) { packsRow.remove(); return; }
@@ -1125,7 +1125,7 @@
     if (!IS_TAURI || !onTaskbar() || life.dragging || !hatched || !chatEl.hidden) return;
     const tb = life.tb;
     const calm = !!derived && derived.state === 'idle' && popEl.hidden && askEl.hidden
-      && !feeding && !life.hovering;
+      && !feeding && !life.hovering && !voice.isSpeaking();
     if (!calm) {
       life.calmSince = now;
       if (life.walking) stopWalking();
@@ -1843,6 +1843,16 @@
     }
     for (const m of (s.missing || []).slice(0, 2)) {
       await sayAndWait(`To help with ${m.use}, I’ll need ${m.app}. You can connect it in the Claude app whenever you like!`);
+    }
+    const picked = introRecord.uses || [];
+    if (IS_TAURI && picked.includes('home')) {
+      const h = await panel({ title: 'Want to connect Home Assistant now?', sub: 'Then I can check on the house and turn things on and off for you.',
+        buttons: [{ label: 'Connect it', primary: true }, { label: 'Later' }], speak: 'Want to connect Home Assistant now?' });
+      if (h && h.button === 'Connect it') await connectHomeAssistant();
+      else await sayAndWait('Okay! It’s in my gear whenever you want it.');
+    }
+    if (picked.includes('media')) {
+      await sayAndWait('Your Plex and download apps send their news straight to me. The home setup guide shows how to point them my way!');
     }
     await sayAndWait(persona.line('fixIt'));
     // H: settling in
@@ -2987,6 +2997,13 @@
   voice.onSpeaking((on, kind) => {
     pet.setSpeaking(on);
     pet.setSquint(on && kind === 'chirp');
+    if (on && kind === 'speech' && pet.state === 'peek') {
+      flourishToken++;
+      flourishing = false;
+      life.busy = false;
+      setTuck(false, true);
+      applyDerived();
+    }
   });
 
   const PECKISH_MS = 3 * 60 * 60 * 1000;
@@ -3065,7 +3082,7 @@
   //     restarts the nap clock. ---
   setInterval(() => {
     if (onTaskbar()) return; // on the taskbar, lifeTick does the peeking
-    if (pet.state !== 'idle' || !derived || derived.state !== 'idle' || Math.random() > 0.4) return;
+    if (pet.state !== 'idle' || !derived || derived.state !== 'idle' || voice.isSpeaking() || Math.random() > 0.4) return;
     flourish(Math.random() < 0.5 ? 'peek' : 'happy_wiggle', null);
   }, 4 * 60 * 1000);
 

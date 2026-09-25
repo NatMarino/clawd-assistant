@@ -431,6 +431,12 @@ export function intakeChips(servers, where = 'work') {
     if (apps) chips.push({ label: label(listNames(apps)), use, apps: listNames(apps) });
   }
   for (const n of unknown.slice(0, 3)) chips.push({ label: `Help with ${n}`, use: 'app:' + n, app: n });
+  // Plex and Home Assistant reach him through his doorways and the gear, not
+  // as Claude apps, so they're always on offer at home
+  if (where !== 'work') {
+    if (!chips.some((c) => c.use === 'media')) chips.push({ label: 'My media server (Plex, Sonarr, Radarr…)', use: 'media' });
+    if (!chips.some((c) => c.use === 'home')) chips.push({ label: 'My smart home (Home Assistant)', use: 'home' });
+  }
   chips.push({ label: 'Reminders for little things', use: 'reminders' });
   if (where !== 'own') chips.push({ label: 'A morning rundown', use: 'rundown' });
   return chips;

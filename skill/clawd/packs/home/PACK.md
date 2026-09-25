@@ -27,6 +27,9 @@ automations can post items straight to `/items`. So:
   items with those ids exist) and Home Assistant (if the `home-assistant` tools
   are there).
 - No rundown unless they asked for one.
+- **Never list media or smart home as missing apps** in the SUMMARY: they
+  arrive through his doorways and the gear's Home Assistant setting, not as
+  Claude apps, and he tells them how himself.
 
 ## Rules
 
