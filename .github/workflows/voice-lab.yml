@@ -1,0 +1,48 @@
+# Voice tasting samples (not part of the app): JTalk (Mei, katakana English)
+# and Flite (classic English TTS), rendered on Linux where both are one
+# apt-get away. Runs only on the voice-lab branch.
+name: voice-lab
+
+on:
+  push:
+    branches: [voice-lab]
+  workflow_dispatch:
+
+jobs:
+  samples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install engines
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y open-jtalk open-jtalk-mecab-naist-jdic hts-voice-nitech-jp-atr503-m001 flite unzip
+          curl -sL -o mmd.zip "https://sourceforge.net/projects/mmdagent/files/MMDAgent_Example/MMDAgent_Example-1.8/MMDAgent_Example-1.8.zip/download"
+          unzip -q -j mmd.zip "MMDAgent_Example-1.8/Voice/mei/*" -d mei
+          flite -lv
+      - name: Render
+        run: |
+          mkdir -p out
+          DIC=/var/lib/mecab/dic/open-jtalk/naist-jdic
+          while IFS=$'\t' read -r id en kana; do
+            printf '%s' "$kana" > /tmp/k.txt
+            for v in normal happy bashful; do
+              for sp in 1.0 1.25; do
+                for ht in 0 3; do
+                  open_jtalk -x $DIC -m mei/mei_$v.htsvoice -r $sp -fm $ht -ow "out/jtalk_mei-${v}_r${sp}_t${ht}_${id}.wav" /tmp/k.txt
+                done
+              done
+            done
+            open_jtalk -x $DIC -m /usr/share/hts-voice/nitech-jp-atr503-m001/nitech_jp_atr503_m001.htsvoice -r 1.15 -fm 4 -ow "out/jtalk_m001_${id}.wav" /tmp/k.txt
+            for v in kal kal16 awb rms slt; do
+              for st in 1.0 0.8; do
+                flite -voice $v --setf duration_stretch=$st -t "$en" -o "out/flite_${v}_s${st}_${id}.wav"
+                flite -voice $v --setf duration_stretch=$st --setf int_f0_target_mean=190 -t "$en" -o "out/flite_${v}_s${st}_hi_${id}.wav"
+              done
+            done
+          done < tools/voice-lab/lines.tsv
+          ls out | wc -l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-samples
+          path: out/
