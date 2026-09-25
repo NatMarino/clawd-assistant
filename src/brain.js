@@ -78,6 +78,51 @@ export function readSummary(texts) {
 }
 
 // the setup stage a text block announces (STAGE 2/3), or 0
+// The DRAFT: {...} line a request ends with when it wrote something for the
+// user (the skill's request job). Returns { to, app, subject, body, link } or
+// null; the JSON may wrap, so it's read by matching braces.
+export function readDraft(texts) {
+  for (const t of [...texts].reverse()) {
+    const s = String(t || '');
+    const at = s.lastIndexOf('DRAFT:');
+    if (at < 0) continue;
+    const open = s.indexOf('{', at);
+    if (open < 0) continue;
+    // copied as it's scanned, with real line breaks inside strings escaped:
+    // a model often writes the body's newlines as newlines
+    let depth = 0, inStr = false, esc = false, json = '';
+    for (let i = open; i < s.length; i++) {
+      const c = s[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        json += c === '\n' ? '\\n' : c === '\t' ? '\\t' : c === '\r' ? '' : c;
+        continue;
+      }
+      json += c;
+      if (c === '"') inStr = true;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) {
+        try {
+          const d = JSON.parse(json);
+          if (d && typeof d.body === 'string' && d.body.trim()) {
+            return { to: String(d.to || ''), app: String(d.app || ''), subject: String(d.subject || ''), body: d.body, link: String(d.link || '') };
+          }
+        } catch {}
+        break;
+      }
+    }
+  }
+  return null;
+}
+// the reply without its DRAFT line (that's for him, not to read out)
+export function withoutDraft(text) {
+  const s = String(text || '');
+  const at = s.lastIndexOf('DRAFT:');
+  return (at < 0 ? s : s.slice(0, at)).trim();
+}
+
 export function readStage(text) {
   const m = String(text || '').match(/STAGE\s+(\d)\s*\/\s*(\d)/i);
   return m ? Number(m[1]) : 0;
