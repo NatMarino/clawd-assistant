@@ -2042,7 +2042,10 @@
     row.className = 'sess' + (it.link ? '' : ' nolink');
     if (it.link) row.title = 'open it';
     if (it.rule) row.title = (row.title ? row.title + ' · ' : '') + 'rule: ' + it.rule;
-    row.onclick = () => (it.draft ? openDraft(it) : it.link ? openItem(it) : talkAbout(it));
+    row.onclick = () => (it.draft ? openDraft(it)
+      : it.rule === 'handoff' && it.proposal && it.proposal.summary ? handOff(it)
+      : it.link ? openItem(it) : talkAbout(it));
+    if (it.rule === 'handoff') row.title = 'hand this to Claude';
     if (it.draft) row.title = 'read your draft';
     const top = document.createElement('div');
     top.className = 'top';
@@ -2333,14 +2336,28 @@
         b.onclick = (e) => { e.stopPropagation(); run(b); };
         row.appendChild(b);
       };
-      btn('Copy', 'change', async (b) => {
-        const text = (c.subject ? `Subject: ${c.subject}\n\n` : '') + c.body;
-        try { await navigator.clipboard.writeText(text); b.textContent = 'Copied ✓'; } catch { b.textContent = 'Couldn’t copy'; }
-      });
-      btn('Open in Claude', 'change', () => openDraftInClaude(c), 'Starts a Claude chat with this draft, to keep working on it there');
-      if (c.link) btn(`Open in ${c.app || 'the app'}`, 'change', () => openLink(c.link));
-      btn('Change it', 'change', () => { chatDraft = c; askInput.placeholder = 'What should I change?'; askInput.focus(); });
-      if (live) btn('Send it…', 'send', () => { chatDraft = null; think(`Send this draft${c.to ? ' to ' + c.to : ''} exactly as written.`, { resume: c.session || threadSession }); });
+      const status = (text, cls = 'd-field') => {
+        const x = document.createElement('span');
+        x.className = cls;
+        x.textContent = text;
+        row.appendChild(x);
+      };
+      // Love it / Don't like it / Revise, then Send it / Copy it
+      if (c.state === 'sent') status('Sent ✓', 'd-sent');
+      else if (c.state === 'copied') status('Copied ✓ All yours!', 'd-sent');
+      else if (c.state === 'tossed') status('Tossed');
+      else if (c.state === 'revised') status('Revised ↓');
+      else if (c.state === 'sending') status('Sending…');
+      else if (c.state === 'loved') {
+        btn('Send it', 'send', () => sendDraft(c));
+        btn('Copy it', 'change', () => copyDraft(c));
+        btn('Open in Claude', 'change', () => openDraftInClaude(c), 'Starts a Claude chat with this draft, to keep working on it there');
+        if (c.link) btn(`Open in ${c.app || 'the app'}`, 'change', () => openLink(c.link));
+      } else {
+        btn('Love it', 'send', () => { c.state = 'loved'; saveThread(); renderThread(); voice.say('Yay! Want me to send it for you, or copy it so you can send it yourself?'); });
+        btn('Don’t like it', 'change', () => { c.state = 'tossed'; closeDraftItem(c); saveThread(); renderThread(); voice.say('Got it, tossed it!'); });
+        btn('Revise', 'change', () => { chatDraft = c; askInput.placeholder = 'What should I change?'; askInput.focus(); });
+      }
       card.appendChild(row);
       return card;
     }
@@ -2448,13 +2465,14 @@
     }
     const resume = chatDraft && chatDraft.session ? chatDraft.session : null;
     if (chatDraft) {
-      about = `(changing the draft${chatDraft.to ? ' to ' + chatDraft.to : ''} you wrote: end with a new DRAFT line)` + (about ? '\n' + about : '');
+      revisingCard = chatDraft;
+      about = `(Revise the draft${chatDraft.to ? ' for ' + chatDraft.to : ''} you wrote, with these changes. End with a new DRAFT line. Don't send it.)` + (about ? '\n' + about : '');
       chatDraft = null;
     }
     await think(`Job: request\nMode: ${plan ? 'ask first' : 'auto'}\nNow: ${new Date().toString()}\n\n${about ? 'About: ' + about + '\n\n' : ''}${text}`, { plan, resume });
   }
 
-  async function think(prompt, { plan = false, alsoAllow = [], resume = null, quiet = false } = {}) {
+  async function think(prompt, { plan = false, alsoAllow = [], resume = null, quiet = false, autoSend = false } = {}) {
     threadTyping = true;
     threadActions = null;
     renderThread();
@@ -2473,6 +2491,10 @@
     }
     const reply = String(r.text || r.texts[r.texts.length - 1] || '').trim() || 'Done!';
     const sends = (r.denials || []).filter((d) => String(d.tool).startsWith('mcp__'));
+    if (sends.length && autoSend) {
+      // they tapped Send it on this draft: that tool, this once
+      return think('Yes, send it exactly as approved.', { resume: threadSession, alsoAllow: [sends[0].tool], quiet: true });
+    }
     if (sends.length) {
       const d = describeSend(sends[0]);
       const appName = (String(sends[0].tool).match(/^mcp__(?:claude_ai_)?([^_]+(?:_[A-Z][a-z]+)*)__/) || [])[1];
@@ -2511,7 +2533,9 @@
           spoken: said, rule: 'draft', draft }]) }).catch(() => {});
         opened.add(id); // you've seen it if the chat is open; the list keeps it
       }
-      voice.say(spokenLine(said));
+      // a revision replaces the draft it came from
+      if (revisingCard) { revisingCard.state = 'revised'; closeDraftItem(revisingCard); revisingCard = null; saveThread(); renderThread(); }
+      voice.say(spokenLine(said) + ' Love it, don’t like it, or revise?');
       if (askEl.hidden && !quiet) showToast(spokenLine(said));
       return true;
     }
@@ -2532,6 +2556,14 @@
   // "Change it" on a draft: the next thing you type goes to the run that
   // wrote it
   let chatDraft = null;
+  let revisingCard = null; // the card a revision will replace
+  // "Ready to hand this to Claude": a new Claude chat with the prompt he
+  // wrote for it, so they can watch it being made
+  function handOff(it) {
+    openInClaude(it.proposal.summary);
+    tickOff(it);
+    voice.say('Handed it to Claude! It’s all yours in the Claude app.');
+  }
   // a draft on his list, clicked: back in his chat with the card
   function openDraft(it) {
     opened.add(it.id);
@@ -2542,6 +2574,38 @@
     }
     tick();
   }
+  // a draft that's been dealt with leaves his list
+  function closeDraftItem(c) {
+    if (!c.itemId) return;
+    if (IS_TAURI) invoke('dismiss_item', { id: c.itemId }).catch(() => {});
+    if (inbox) inbox = { ...inbox, items: inbox.items.filter((x) => x.id !== c.itemId) };
+    tick();
+  }
+  // "Send it": the tap is the approval, so the send goes straight through
+  // (a later run than the one that wrote it, and only this draft)
+  async function sendDraft(c) {
+    c.state = 'sending';
+    saveThread();
+    renderThread();
+    const where = c.to ? ` to ${c.to}` : '';
+    const ok = await think(`Send the approved draft${where}, exactly as written${c.app ? ' with ' + c.app : ''}:\n\n${c.subject ? 'Subject: ' + c.subject + '\n\n' : ''}${c.body}`,
+      { resume: c.session || null, autoSend: true, quiet: true });
+    c.state = ok ? 'sent' : 'loved';
+    if (ok) { closeDraftItem(c); flourish('happy_wiggle', null, true); voice.chirp(null, 'happy'); }
+    saveThread();
+    renderThread();
+  }
+  // "Copy it": on the clipboard, ready to paste wherever they send it
+  async function copyDraft(c) {
+    const text = (c.subject ? `Subject: ${c.subject}\n\n` : '') + c.body;
+    try { await navigator.clipboard.writeText(text); } catch {}
+    c.state = 'copied';
+    closeDraftItem(c);
+    saveThread();
+    renderThread();
+    voice.say('Here it is, all yours!');
+  }
+
   // keep working on it in the Claude app: a new chat with the draft in it
   function openDraftInClaude(c) {
     const body = String(c.body || '').slice(0, 3000);
