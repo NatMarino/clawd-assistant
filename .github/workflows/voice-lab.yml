@@ -1,6 +1,8 @@
-# Voice tasting samples (not part of the app): JTalk (Mei, katakana English)
-# and Flite (classic English TTS), rendered on Linux where both are one
-# apt-get away. Runs only on the voice-lab branch.
+# Voice tasting samples (not part of the app), rendered on Linux where the
+# engines are an apt-get or pip away. Runs only on the voice-lab branch.
+#   samples     JTalk (Mei, English in katakana) and Flite (classic English TTS)
+#   piper-low   Piper's lowest-quality voices: English "low", and other
+#               languages' "x_low" reading English (accented, lo-fi)
 name: voice-lab
 
 on:
@@ -19,7 +21,6 @@ jobs:
           sudo apt-get install -y open-jtalk open-jtalk-mecab-naist-jdic hts-voice-nitech-jp-atr503-m001 flite unzip
           curl -sL -o mmd.zip "https://sourceforge.net/projects/mmdagent/files/MMDAgent_Example/MMDAgent_Example-1.8/MMDAgent_Example-1.8.zip/download"
           unzip -q -j mmd.zip "MMDAgent_Example-1.8/Voice/mei/*" -d mei
-          flite -lv
       - name: Render
         run: |
           mkdir -p out
@@ -41,8 +42,48 @@ jobs:
               done
             done
           done < tools/voice-lab/lines.tsv
-          ls out | wc -l
       - uses: actions/upload-artifact@v4
         with:
           name: voice-samples
+          path: out/
+
+  piper-low:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Piper
+        run: pip install piper-tts
+      - name: Render
+        run: |
+          mkdir -p out models
+          HF=https://huggingface.co/rhasspy/piper-voices/resolve/main
+          for v in \
+            en/en_US/amy/low/en_US-amy-low \
+            en/en_US/danny/low/en_US-danny-low \
+            en/en_US/kathleen/low/en_US-kathleen-low \
+            en/en_US/lessac/low/en_US-lessac-low \
+            en/en_US/ryan/low/en_US-ryan-low \
+            en/en_GB/alan/low/en_GB-alan-low \
+            en/en_GB/southern_english_female/low/en_GB-southern_english_female-low \
+            de/de_DE/eva_k/x_low/de_DE-eva_k-x_low \
+            it/it_IT/riccardo/x_low/it_IT-riccardo-x_low \
+            es/es_MX/ald/x_low/es_MX-ald-x_low \
+            nl/nl_BE/nathalie/x_low/nl_BE-nathalie-x_low; do
+            n=$(basename "$v")
+            curl -sL -o "models/$n.onnx" "$HF/$v.onnx"
+            curl -sL -o "models/$n.onnx.json" "$HF/$v.onnx.json"
+            while IFS=$'\t' read -r id en kana; do
+              if [ "$id" != l0 ] && [ "$id" != l2 ]; then continue; fi
+              echo "$en" | piper -m "models/$n.onnx" -f "out/piper_${n}_normal_${id}.wav"
+              echo "$en" | piper -m "models/$n.onnx" --noise-scale 0 --noise-w-scale 0 -f "out/piper_${n}_flat_${id}.wav"
+              echo "$en" | piper -m "models/$n.onnx" --length-scale 0.78 -f "out/piper_${n}_fast_${id}.wav"
+            done < tools/voice-lab/lines.tsv
+          done
+          ls out | wc -l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: piper-low
           path: out/
