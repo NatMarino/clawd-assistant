@@ -66,6 +66,9 @@ const CLIPS = {
   happy_wiggle: { loop: 'happy-wiggle' },
   celebrate: { loop: 'celebrate' },
   peek: { loop: 'peek', fromBottomEdge: true },
+  // his resting loop and the meal replace the engine's own clips
+  idle: { loop: 'idle' },
+  eating: { loop: 'eat' },
   hearts: { loop: 'hearts' },
   mad: { loop: 'mad' },
   talk: { loop: 'talk' },

@@ -247,20 +247,87 @@ pub struct Brain {
     pub running: Mutex<Option<(String, Child)>>,
     /// held for the whole of a run: a second run waits its turn
     pub turn: Arc<Mutex<()>>,
+    /// safe tools a run was refused and he approved from then on (kept in
+    /// allowed-tools.json in his app data). On some machines the apps connect
+    /// after Claude's start-up list is written, so that list alone misses
+    /// them; the refusals name them exactly.
+    pub learned: Mutex<Option<Vec<String>>>,
+}
+
+fn learned_path() -> Option<PathBuf> {
+    crate::platform::app_data_dir().map(|d| d.join("allowed-tools.json"))
+}
+
+fn learned(brain: &Brain) -> Vec<String> {
+    let mut l = brain.learned.lock_or_recover();
+    if l.is_none() {
+        *l = Some(
+            learned_path()
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .and_then(|t| serde_json::from_str::<Vec<String>>(t.trim_start_matches('\u{feff}')).ok())
+                .unwrap_or_default(),
+        );
+    }
+    l.clone().unwrap_or_default()
+}
+
+fn learn(brain: &Brain, tools: &[String]) {
+    let mut all = learned(brain);
+    for t in tools {
+        if !all.contains(t) {
+            all.push(t.clone());
+        }
+    }
+    if let Some(p) = learned_path() {
+        let _ = std::fs::write(p, serde_json::to_string_pretty(&all).unwrap_or_default());
+    }
+    *brain.learned.lock_or_recover() = Some(all);
+}
+
+/// A tool he may approve by himself: it reads, or it changes the user's own
+/// things (checking off their task), and never reaches another person.
+pub fn safe_to_learn(tool: &str) -> bool {
+    (tool.starts_with("mcp__") && !reaches_other_people(tool))
+        || matches!(tool, "Skill" | "ToolSearch" | "TodoWrite" | "WebSearch")
 }
 
 /// What a run may do without asking.
-fn allowed_tools(tools: &[String], also: &[String]) -> Vec<String> {
+fn allowed_tools(tools: &[String], learned: &[String], also: &[String]) -> Vec<String> {
     let mut out: Vec<String> = vec![
         "Read(./**)".into(),
         "Write(./**)".into(),
         "Edit(./**)".into(),
         "Glob".into(),
         "Grep".into(),
+        // skills, finding tools that load on demand, and his own to-do list
+        "Skill".into(),
+        "ToolSearch".into(),
+        "TodoWrite".into(),
     ];
-    out.extend(tools.iter().filter(|t| t.starts_with("mcp__") && !reaches_other_people(t)).cloned());
+    for t in tools.iter().chain(learned.iter()) {
+        if t.starts_with("mcp__") && !reaches_other_people(t) && !out.contains(t) {
+            out.push(t.clone());
+        }
+    }
     out.extend(also.iter().cloned()); // one confirmed send
     out
+}
+
+/// A short system line; the instructions themselves go in on standard input
+/// (Windows caps a command line at ~32k characters, and the skill plus packs
+/// can pass that). `--append-system-prompt-file` is ignored by the CLI in
+/// print mode, so it isn't an option.
+const SYSTEM_LINE: &str = "You are the big brain behind Claw'd, a desktop assistant pet. The first message starts with your full instructions in a <clawd-instructions> block: follow them.";
+
+/// What goes in on standard input: the instructions (first message of a
+/// conversation only), then the job.
+fn stdin_payload(spec: &RunSpec) -> String {
+    let resuming = spec.resume.as_deref().is_some_and(|r| !r.is_empty());
+    if resuming || spec.system.is_empty() {
+        spec.prompt.clone()
+    } else {
+        format!("<clawd-instructions>\n{}\n</clawd-instructions>\n\n{}", spec.system, spec.prompt)
+    }
 }
 
 pub struct RunSpec {
@@ -276,11 +343,11 @@ pub struct RunSpec {
     pub max_turns: u32,
 }
 
-fn command(exe: &Path, dir: &Path, spec: &RunSpec, tools: &[String]) -> Command {
+fn command(exe: &Path, dir: &Path, spec: &RunSpec, tools: &[String], learned: &[String]) -> Command {
     let mut c = Command::new(exe);
+    // -p with no prompt argument: the prompt comes on standard input
     c.current_dir(dir)
         .arg("-p")
-        .arg(&spec.prompt)
         .args(["--output-format", "stream-json", "--verbose"])
         .args(["--setting-sources", "project"])
         .args(["--max-turns", &spec.max_turns.to_string()])
@@ -289,19 +356,29 @@ fn command(exe: &Path, dir: &Path, spec: &RunSpec, tools: &[String]) -> Command 
         c.args(["--model", &spec.model]);
     }
     if !spec.system.is_empty() {
-        c.args(["--append-system-prompt", &spec.system]);
+        c.args(["--append-system-prompt", SYSTEM_LINE]);
     }
     if spec.mode == "plan" {
         c.args(["--permission-mode", "plan"]);
     } else {
-        c.args(["--allowedTools", &allowed_tools(tools, &spec.also_allow).join(",")]);
+        c.args(["--allowedTools", &allowed_tools(tools, learned, &spec.also_allow).join(",")]);
     }
     if let Some(r) = spec.resume.as_deref().filter(|r| !r.is_empty()) {
         c.args(["--resume", r]);
     }
-    c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     crate::platform::no_window(&mut c);
     c
+}
+
+fn feed_stdin(child: &mut Child, text: String) {
+    if let Some(mut stdin) = child.stdin.take() {
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(text.as_bytes());
+            // dropping it closes the pipe: that's the end of the prompt
+        });
+    }
 }
 
 /// Start a run on its own thread; every line goes to the page as a "brain"
@@ -323,51 +400,85 @@ pub fn spawn_run(app: AppHandle, brain: Arc<Brain>, dir: PathBuf, spec: RunSpec)
             emit(fail("not-found".into()));
             return;
         };
-        log(&format!("run {}: start ({}, {}, {})", spec.job, exe.display(), if spec.model.is_empty() { "default" } else { &spec.model }, spec.mode));
         let turn = brain.turn.clone();
         let _turn = turn.lock_or_recover();
-        let tools = brain.tools.lock_or_recover().clone();
-        let mut child = match command(&exe, &dir, &spec, &tools).spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                log(&format!("run {}: could not start: {e}", spec.job));
-                emit(fail(format!("could not start: {e}")));
-                return;
-            }
-        };
-        let stdout = child.stdout.take();
-        let mut stderr = child.stderr.take();
-        *brain.running.lock_or_recover() = Some((job.clone(), child));
+        let mut spec = spec;
+        // A run refused a safe tool (reading Slack, checking off their own
+        // task…): approve it from now on and carry on, once, in the same
+        // conversation. Anything that reaches another person still stops for
+        // the user's tap.
+        for attempt in 0..2 {
+            log(&format!("run {}: start ({}, {}, {}){}", spec.job, exe.display(), if spec.model.is_empty() { "default" } else { &spec.model }, spec.mode,
+                if attempt > 0 { " carrying on" } else { "" }));
+            let tools = brain.tools.lock_or_recover().clone();
+            let known = learned(&brain);
+            let mut child = match command(&exe, &dir, &spec, &tools, &known).spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    log(&format!("run {}: could not start: {e}", spec.job));
+                    emit(fail(format!("could not start: {e}")));
+                    return;
+                }
+            };
+            feed_stdin(&mut child, stdin_payload(&spec));
+            let stdout = child.stdout.take();
+            let mut stderr = child.stderr.take();
+            *brain.running.lock_or_recover() = Some((job.clone(), child));
 
-        let mut got_result = false;
-        let mut seen_tools = Vec::new();
-        if let Some(out) = stdout {
-            for line in BufReader::new(out).lines().map_while(Result::ok) {
-                if let Some(ev) = parse_line(&job, &line, &mut seen_tools) {
-                    got_result |= ev.kind == "result";
-                    if ev.kind == "result" {
-                        let denied: Vec<&str> = ev.denials.iter().map(|d| d.tool.as_str()).collect();
-                        log(&format!("run {job}: done error={} denied=[{}]{}", ev.is_error, denied.join(", "),
-                            if ev.is_error { format!(" text: {}", ev.text.chars().take(300).collect::<String>()) } else { String::new() }));
+            let mut result: Option<BrainEvent> = None;
+            let mut seen_tools = Vec::new();
+            if let Some(out) = stdout {
+                for line in BufReader::new(out).lines().map_while(Result::ok) {
+                    if let Some(ev) = parse_line(&job, &line, &mut seen_tools) {
+                        if ev.kind == "result" {
+                            result = Some(ev); // held back: it may not be the last word
+                        } else {
+                            emit(ev);
+                        }
                     }
-                    emit(ev);
                 }
             }
-        }
-        if !seen_tools.is_empty() {
-            *brain.tools.lock_or_recover() = seen_tools;
-        }
-        let mut err_text = String::new();
-        if let Some(e) = stderr.as_mut() {
-            let _ = e.take(8192).read_to_string(&mut err_text);
-        }
-        if let Some((_, mut c)) = brain.running.lock_or_recover().take() {
-            let _ = c.wait();
-        }
-        if !got_result {
-            let t = err_text.trim();
-            log(&format!("run {job}: ended with no result; stderr: {}", t.chars().take(600).collect::<String>()));
-            emit(fail(if t.is_empty() { "stopped".into() } else { classify(t).into() }));
+            if !seen_tools.is_empty() {
+                *brain.tools.lock_or_recover() = seen_tools;
+            }
+            let mut err_text = String::new();
+            if let Some(e) = stderr.as_mut() {
+                let _ = e.take(8192).read_to_string(&mut err_text);
+            }
+            if let Some((_, mut c)) = brain.running.lock_or_recover().take() {
+                let _ = c.wait();
+            }
+            let Some(ev) = result else {
+                let t = err_text.trim();
+                log(&format!("run {job}: ended with no result; stderr: {}", t.chars().take(600).collect::<String>()));
+                emit(fail(if t.is_empty() { "stopped".into() } else { classify(t).into() }));
+                return;
+            };
+            let denied: Vec<&str> = ev.denials.iter().map(|d| d.tool.as_str()).collect();
+            log(&format!("run {job}: done error={} denied=[{}]{}", ev.is_error, denied.join(", "),
+                if ev.is_error { format!(" text: {}", ev.text.chars().take(300).collect::<String>()) } else { String::new() }));
+            let mut safe: Vec<String> = Vec::new();
+            for d in &ev.denials {
+                if safe_to_learn(&d.tool) && !safe.contains(&d.tool) {
+                    safe.push(d.tool.clone());
+                }
+            }
+            if !safe.is_empty() {
+                learn(&brain, &safe);
+                log(&format!("run {job}: approved from now on: {}", safe.join(", ")));
+            }
+            let can_resume = !ev.session.is_empty() && spec.mode != "plan";
+            if attempt == 0 && !safe.is_empty() && can_resume {
+                let mut note = BrainEvent::new(&job, "tool");
+                note.text = "approving".into();
+                emit(note);
+                spec.resume = Some(ev.session.clone());
+                spec.prompt = "Those tools are approved now. Carry on with the job from where you stopped, and finish it.".into();
+                spec.also_allow.extend(safe);
+                continue;
+            }
+            emit(ev);
+            return;
         }
     });
 }
@@ -431,13 +542,15 @@ pub fn probe(brain: &Brain, dir: &Path, model: &str, secs: u64) -> Status {
     };
     let _turn = brain.turn.lock_or_recover();
     let tools = brain.tools.lock_or_recover().clone();
-    let mut child = match command(&exe, dir, &spec, &tools).spawn() {
+    let known = learned(brain);
+    let mut child = match command(&exe, dir, &spec, &tools, &known).spawn() {
         Ok(c) => c,
         Err(e) => {
             log(&format!("probe: could not start: {e}"));
             return Status { found: true, ready: false, problem: "failed".into(), servers: vec![] };
         }
     };
+    feed_stdin(&mut child, stdin_payload(&spec));
     let (tx, rx) = std::sync::mpsc::channel();
     let out = child.stdout.take();
     std::thread::spawn(move || {
@@ -536,12 +649,40 @@ mod tests {
     #[test]
     fn safe_tools_are_preallowed_and_sends_are_not() {
         let tools = vec!["mcp__a__list_events".to_string(), "mcp__a__send_email".to_string(), "Bash".to_string()];
-        let allowed = allowed_tools(&tools, &[]);
+        let allowed = allowed_tools(&tools, &[], &[]);
         assert!(allowed.contains(&"mcp__a__list_events".to_string()));
         assert!(!allowed.contains(&"mcp__a__send_email".to_string()));
         assert!(!allowed.contains(&"Bash".to_string()));
-        let with = allowed_tools(&tools, &["mcp__a__send_email".to_string()]);
+        let with = allowed_tools(&tools, &[], &["mcp__a__send_email".to_string()]);
         assert!(with.contains(&"mcp__a__send_email".to_string()));
+        // tools learned from refusals count too, but never a send
+        let learned = vec!["mcp__claude_ai_Asana__update_tasks".to_string(), "mcp__claude_ai_Slack__slack_send_message".to_string()];
+        let l = allowed_tools(&[], &learned, &[]);
+        assert!(l.contains(&"mcp__claude_ai_Asana__update_tasks".to_string()));
+        assert!(!l.contains(&"mcp__claude_ai_Slack__slack_send_message".to_string()));
+        assert!(l.contains(&"Skill".to_string()));
+    }
+
+    #[test]
+    fn what_he_may_approve_himself() {
+        for ok in ["mcp__claude_ai_Slack__slack_search_channels", "mcp__claude_ai_Asana__search_tasks", "mcp__claude_ai_Asana__update_tasks", "Skill", "ToolSearch"] {
+            assert!(safe_to_learn(ok), "{ok}");
+        }
+        for no in ["mcp__claude_ai_Slack__slack_send_message", "mcp__claude_ai_Gmail__send_email", "mcp__claude_ai_Google_Calendar__create_event", "Bash", "WebFetch", "Write"] {
+            assert!(!safe_to_learn(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn instructions_go_in_once_on_stdin() {
+        let mut spec = RunSpec {
+            job: "j".into(), prompt: "Job: sweep".into(), system: "SKILL".into(), model: String::new(),
+            mode: "auto".into(), resume: None, also_allow: vec![], max_turns: 3,
+        };
+        let first = stdin_payload(&spec);
+        assert!(first.starts_with("<clawd-instructions>\nSKILL\n</clawd-instructions>") && first.ends_with("Job: sweep"));
+        spec.resume = Some("s1".into());
+        assert_eq!(stdin_payload(&spec), "Job: sweep");
     }
 
     /// The real thing, on this machine: cargo test live_ -- --ignored --nocapture
@@ -571,7 +712,12 @@ What is 2 plus 2? Answer in one short sentence.".into(),
             also_allow: vec![],
             max_turns: 3,
         };
-        let out = command(&exe, &dir, &spec, &tools).output().expect("ran");
+        // instructions far past Windows' 32k command-line limit: they go in
+        // on standard input, so this must still start
+        let spec = RunSpec { system: crate::feed::SKILL.repeat(4), ..spec };
+        let mut child = command(&exe, &dir, &spec, &tools, &[]).spawn().expect("ran");
+        feed_stdin(&mut child, stdin_payload(&spec));
+        let out = child.wait_with_output().expect("finished");
         let mut seen = Vec::new();
         let events: Vec<BrainEvent> = String::from_utf8_lossy(&out.stdout)
             .lines()
