@@ -1,0 +1,6 @@
+{
+  "name": "Dev",
+  "blurb": "Claude Code sessions (working, thinking, needs you), pull requests and CI",
+  "icon": "code",
+  "sessions": true
+}

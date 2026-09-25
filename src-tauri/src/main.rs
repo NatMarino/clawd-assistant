@@ -7,6 +7,7 @@
 
 mod brain;
 mod feed;
+mod packs;
 mod platform;
 mod state;
 mod taskbar;
@@ -377,16 +378,30 @@ fn brain_run(
     also_allow: Vec<String>,
     max_turns: Option<u32>,
 ) {
-    let system = if extra.trim().is_empty() { feed::SKILL.to_string() } else { format!("{}
+    let dir = clawd_dir(&state);
+    let base = packs::system_prompt(&dir, feed::SKILL);
+    let system = if extra.trim().is_empty() { base } else { format!("{base}
 
-{}", feed::SKILL, extra) };
+{extra}") };
     let spec = brain::RunSpec { job, prompt, system, model, mode, resume, also_allow, max_turns: max_turns.unwrap_or(30) };
-    brain::spawn_run(app, state.brain.clone(), clawd_dir(&state), spec);
+    brain::spawn_run(app, state.brain.clone(), dir, spec);
 }
 
 #[tauri::command]
 fn brain_stop(state: tauri::State<AppState>) {
     brain::stop(&state.brain);
+}
+
+/// Every pack in the Clawd folder, and which are on.
+#[tauri::command]
+fn list_packs(state: tauri::State<AppState>) -> Vec<packs::PackInfo> {
+    packs::list(&clawd_dir(&state))
+}
+
+/// Turn packs on and off (the gear, and setup).
+#[tauri::command]
+fn set_packs(state: tauri::State<AppState>, enabled: Vec<String>) -> bool {
+    packs::set_enabled(&clawd_dir(&state), &enabled)
 }
 
 /// The one-time things only a person can do, in the big brain's own window:
@@ -740,7 +755,7 @@ fn main() {
             set_opaque_bounds, start_drag, end_drag, set_pet_scale, get_pet_scale, quit_app,
             open_link, ask_claude, taskbar_info, go_to_taskbar, walk_to, stop_walk, report_anchor, save_intro, load_intro,
             brain_status, brain_run, brain_stop, brain_open, read_prefs, add_local_items, page_log,
-            waiting_for_claude, get_start_with_claude, set_start_with_claude,
+            waiting_for_claude, get_start_with_claude, set_start_with_claude, list_packs, set_packs,
             state::get_pet_state, state::dismiss_item, state::hand_off_item
         ])
         .setup(move |app| {

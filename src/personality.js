@@ -94,7 +94,14 @@ const LINES = {
       reminders: ['Nothing slips past me!', 'Little things are my favorite things.'],
       rundown: ['A morning rundown, with a smile.', 'Coffee and a rundown, got it!'],
       app: ['Ooh, {app}! I’ll learn how that works.', '{app}? I’m on it.'],
+      media: ['Movie night! I’ll tell you when things are ready.', 'Ooh, {apps}! I love a good show.'],
+      home: ['I’ll keep an eye on the house.', 'Home stuff! I’ll tell you if anything needs you.'],
+      coding: ['Coding buddy mode! I’ll tell you when Claude needs you.', 'I’ll watch your sessions so you can grab a snack.'],
+      code_reviews: ['Pull requests, got it. No review left waiting.', 'I’ll tell you when CI is grumpy.'],
     },
+    whereWork: ['A work computer! I’ll be all business. Mostly.', 'Work mode, got it!'],
+    whereOwn: ['Your own computer! So we get to have fun.', 'Ooh, the fun computer!'],
+    whereBoth: ['A bit of everything! My favorite.', 'Work and play, got it!'],
     other: ['{echo}? Ooh, I can help with that!', 'Noted: {echo}. The big brain and I are on it.', '{echo}! Okay, I’ll keep that in mind.'],
     otherTravel: ['Travel stuff! I love a good itinerary.'],
     otherFood: ['Snacks? Now you’re speaking my language.'],
@@ -363,30 +370,60 @@ const KINDS = [
   ['meeting_notes', /granola|otter|fireflies|fathom|zoom|meet/i, (a) => `Meeting notes from ${a}`],
 ];
 // tools for building things, not a coworker's apps
+// at home, GitHub is one of his apps
+const NOT_HOME_APPS = /playwright|puppeteer|context7|filesystem|memory|sequential|fetch|browser|chrome|figma|computer|claude[- ]?code|preview|terminal|scheduled|registry|visuali[sz]e|session|mcp/i;
 const NOT_APPS = /playwright|puppeteer|context7|filesystem|memory|sequential|fetch|browser|chrome|figma|computer|claude[- ]?code|preview|terminal|github|git\b|scheduled|registry|visuali[sz]e|session|mcp/i;
 
+// how an app is spelled when he says it (server names are often lowercase)
+const SPELLING = { github: 'GitHub', gitlab: 'GitLab', 'home assistant': 'Home Assistant', homeassistant: 'Home Assistant', plex: 'Plex', jellyfin: 'Jellyfin', sonarr: 'Sonarr', radarr: 'Radarr', overseerr: 'Overseerr', tautulli: 'Tautulli', spotify: 'Spotify' };
 export function appName(server) {
-  return String(server || '').replace(/^claude\.ai\s+/i, '').replace(/^(google)\s+(calendar|drive)$/i, 'Google $2').trim();
+  const n = String(server || '').replace(/^claude\.ai\s+/i, '').replace(/^(google)\s+(calendar|drive)$/i, 'Google $2').replace(/[-_]/g, ' ').trim();
+  return SPELLING[n.toLowerCase()] || (n === n.toLowerCase() ? n.replace(/^./, (c) => c.toUpperCase()) : n);
 }
-export function intakeChips(servers) {
+// Which packs each use belongs to (reminders and one-off apps go with any).
+export const USE_PACK = {
+  messages: 'office', email: 'office', calendar: 'office', tasks: 'office', docs: 'office', meeting_notes: 'office', rundown: 'office',
+  media: 'home', home: 'home',
+  coding: 'dev', code_reviews: 'dev',
+};
+// the packs to turn on for where he lives and what was picked
+export function packsFor(where, uses) {
+  const on = new Set(uses.map((u) => USE_PACK[u]).filter(Boolean));
+  if (where === 'work') on.add('office');
+  return [...on];
+}
+const HOME_KINDS = [
+  ['media', /plex|jellyfin|emby|sonarr|radarr|overseerr|tautulli|spotify|lidarr/i, (a) => `What’s new on ${a}`],
+  ['home', /home ?assistant|hue|smartthings|nest|homekit/i, (a) => `Keeping an eye on ${a}`],
+  ['code_reviews', /github|gitlab|bitbucket/i, (a) => `Pull requests and CI on ${a}`],
+];
+// where: 'work' (office apps only), 'own' (home and dev), 'both'
+export function intakeChips(servers, where = 'work') {
+  const kinds = where === 'work' ? KINDS : where === 'own' ? HOME_KINDS : [...KINDS, ...HOME_KINDS];
+  const skip = where === 'work' ? NOT_APPS : NOT_HOME_APPS;
   const names = (servers || [])
     .filter((s) => s && s.name && s.status !== 'failed')
     .map((s) => appName(s.name))
-    .filter((n) => n && !NOT_APPS.test(n));
+    .filter((n) => n && !skip.test(n));
   const byUse = new Map();
   const unknown = [];
   for (const n of [...new Set(names)]) {
-    const k = KINDS.find(([, re]) => re.test(n));
+    const k = kinds.find(([, re]) => re.test(n));
+    // an app for the other side (office apps at home, Plex at work) isn't an
+    // unknown app, just not what he's for here
+    if (!k && where === 'own' && KINDS.some(([, re]) => re.test(n))) continue;
+    if (!k && where === 'work' && HOME_KINDS.some(([, re]) => re.test(n))) continue;
     if (k) { if (!byUse.has(k[0])) byUse.set(k[0], []); byUse.get(k[0]).push(n); } else unknown.push(n);
   }
   const chips = [];
-  for (const [use, , label] of KINDS) {
+  if (where !== 'work') chips.push({ label: 'My coding projects (Claude Code)', use: 'coding' });
+  for (const [use, , label] of kinds) {
     const apps = byUse.get(use);
     if (apps) chips.push({ label: label(listNames(apps)), use, apps: listNames(apps) });
   }
   for (const n of unknown.slice(0, 3)) chips.push({ label: `Help with ${n}`, use: 'app:' + n, app: n });
   chips.push({ label: 'Reminders for little things', use: 'reminders' });
-  chips.push({ label: 'A morning rundown', use: 'rundown' });
+  if (where !== 'own') chips.push({ label: 'A morning rundown', use: 'rundown' });
   return chips;
 }
 // what he says when he's just looked at your apps

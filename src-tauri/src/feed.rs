@@ -147,6 +147,8 @@ pub fn prepare_dir(cfg: &FeedConfig) -> PathBuf {
     if std::fs::read_to_string(&skill).map_or(true, |s| s != SKILL) {
         let _ = std::fs::write(&skill, SKILL);
     }
+    // the built-in packs, refreshed the same way (packs of your own stay)
+    crate::packs::write_builtins(&dir);
     let http = serde_json::json!({
         "url": format!("http://127.0.0.1:{}/items", cfg.http_port),
         "token": cfg.http_token,

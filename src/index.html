@@ -343,6 +343,9 @@
     <button data-start="on" title="I start when you log in and come out when Claude opens">on</button>
     <button data-start="off" title="I only start when you open me">off</button>
   </div>
+  <div id="packs-row" class="theme-row" hidden>
+    <span class="lbl">packs:</span>
+  </div>
   <div id="custom-row" class="theme-row" hidden>
     <button id="custom-btn">customize how I look and sound…</button>
   </div>
@@ -593,7 +596,30 @@
   // the gear: mode, theme, starting with Claude, and one Customize button
   // (skin, voice, pitch and size live in the picker it opens, the same one
   // as during setup)
-  const SETTINGS_ROWS = [modeRow, themeRow, startRow, customRow];
+  const packsRow = document.getElementById('packs-row');
+  const SETTINGS_ROWS = [modeRow, themeRow, startRow, packsRow, customRow];
+  // what he's for: one button per pack in the Clawd folder, on or off
+  async function renderPacks() {
+    if (!IS_TAURI) { packsRow.remove(); return; }
+    let list = [];
+    try { list = await invoke('list_packs'); } catch {}
+    packsRow.querySelectorAll('button').forEach((b) => b.remove());
+    for (const p of list) {
+      const b = document.createElement('button');
+      b.textContent = p.name.toLowerCase();
+      b.title = p.blurb || p.name;
+      b.classList.toggle('active', p.enabled);
+      b.onclick = async (e) => {
+        e.stopPropagation();
+        p.enabled = !p.enabled;
+        b.classList.toggle('active', p.enabled);
+        await invoke('set_packs', { enabled: list.filter((x) => x.enabled).map((x) => x.id) }).catch(() => {});
+        voice.say(p.enabled ? `Okay! I’ll help with ${p.name.toLowerCase()} stuff too.` : `Okay, no more ${p.name.toLowerCase()} stuff.`);
+      };
+      packsRow.appendChild(b);
+    }
+  }
+  renderPacks();
   function syncStartButtons(on) {
     startRow.querySelectorAll('button[data-start]').forEach((b) => b.classList.toggle('active', (b.dataset.start === 'on') === on));
   }
@@ -633,6 +659,7 @@
   gearBtn.onclick = (e) => {
     e.stopPropagation();
     const show = themeRow.hidden;
+    if (show) renderPacks();
     SETTINGS_ROWS.forEach((r) => { r.hidden = !show; });
     reportBounds();
   };
@@ -1567,10 +1594,32 @@
     note(text);
     await sleep(ms);
   }
+  // Where does he live? A work computer gets the office pack; your own gets
+  // home and dev. (One Claw'd; packs are what he's for.)
+  const WHERE = [['My work computer', 'work'], ['My own computer', 'own'], ['A bit of both', 'both']];
+  async function askWhere() {
+    const r = await panel({ title: 'Where am I living?', chips: WHERE.map((w) => w[0]),
+      buttons: [{ label: 'Next', primary: true }], muffled: true,
+      onChip: (label, on) => {
+        if (!on) return;
+        const w = WHERE.find((x) => x[0] === label)[1];
+        voice.chirp(2, 'muffled');
+        chatSub.textContent = persona.line(w === 'work' ? 'whereWork' : w === 'own' ? 'whereOwn' : 'whereBoth');
+        chatSub.hidden = false;
+        placeChat(); reportBounds();
+      } });
+    if (!r) return null;
+    const w = WHERE.find((x) => x[0] === r.chips[0]);
+    return w ? w[1] : 'work';
+  }
   async function askUses(st) {
-    const found = persona.intakeChips(st && st.servers);
-    const chips = found.length > 2 ? found : USES.map(([label, use]) => ({ label, use }));
-    const title = found.length > 2 ? persona.introLine(found) : 'What would you like my help with?';
+    const where = await askWhere();
+    if (!where) return null;
+    const found = persona.intakeChips(st && st.servers, where);
+    const enough = where === 'work' ? found.length > 2 : found.length > 1;
+    const chips = enough ? found : where === 'work' ? USES.map(([label, use]) => ({ label, use }))
+      : persona.intakeChips([], where);
+    const title = enough && found.some((c) => c.apps || c.app) ? persona.introLine(found) : 'What would you like my help with?';
     const r = await panel({ title, sub: 'Tap all that fit.',
       chips: chips.map((c) => c.label), multi: true, other: true, input: false,
       placeholder: 'Tell me what else…', buttons: [{ label: 'That’s it', primary: true }], muffled: true,
@@ -1589,7 +1638,9 @@
       const c = chips.find((x) => x.label === label);
       return c ? c.use : label;
     });
-    const out = { uses, apps: chips.filter((c) => uses.includes(c.use) && (c.apps || c.app)).map((c) => c.apps || c.app) };
+    const out = { where, uses, apps: chips.filter((c) => uses.includes(c.use) && (c.apps || c.app)).map((c) => c.apps || c.app) };
+    // what he's for, from here on
+    if (IS_TAURI) await invoke('set_packs', { enabled: persona.packsFor(where, uses) }).catch(() => {});
     await eggReact(persona.reactToUses(uses, otherText), otherText ? 2400 : 1700);
     if (uses.includes('messages')) {
       const m = await panel({ title: 'Which messages matter most?', chips: ['DMs', 'Mentions', 'A few channels'], multi: true,
@@ -1729,16 +1780,17 @@
     setUserName(name);
     await saveIntro({ name });
     await sayAndWait(persona.reactToName(name));
+    const office = !introRecord.where || introRecord.where !== 'own';
     const askB = persona.line('askBesties');
-    const b = await panel({ title: askB, input: true, placeholder: 'e.g. Miguel, Bridgett',
-      skip: true, speak: askB });
+    const b = office ? await panel({ title: askB, input: true, placeholder: 'e.g. Miguel, Bridgett',
+      skip: true, speak: askB }) : null;
     const besties = b && b.button !== 'Skip' ? b.text : '';
     if (besties) {
       await saveIntro({ besties });
       flourish('hearts', null, true);
       await sayAndWait(persona.reactToBesties(besties));
     }
-    const bestiesDone = brainOk ? brain.run({ prompt: 'Job: besties', model: MODELS.main, maxTurns: 25 }).then(loadPrefs) : Promise.resolve();
+    const bestiesDone = brainOk && office ? brain.run({ prompt: 'Job: besties', model: MODELS.main, maxTurns: 25 }).then(loadPrefs) : Promise.resolve();
     // G: what the big brain found out
     const s = setup.summary || {};
     if (s.hours) {

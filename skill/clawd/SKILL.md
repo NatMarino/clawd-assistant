@@ -65,6 +65,7 @@ Never "the user". Never read out links, IDs or markdown. Use the name from
 | `sent.json` | you (sweeps) | your memory between sweeps (below) |
 | `http.json` | Claw'd | a local URL and token, for a Claude that would rather POST |
 | `SKILL.md` | Claw'd | this file |
+| `packs/`, `packs.json` | Claw'd, and the user | what he's for, and which packs are on |
 
 **Writing items:** use your Write tool to create `inbox/<timestamp>.json` (for
 example `inbox/20260924-141503.json`), with all of the run's items in one JSON
@@ -102,6 +103,15 @@ array.
 | `rule` | which rule produced it. |
 | `proposal` | optional: `{ "summary", "draft_link" }`, the obvious helpful next step, in one line. |
 
+## Packs
+
+What Claw'd is *for* comes in **packs**: plain-English instructions in
+`packs/<name>/PACK.md` in the Clawd folder. The office pack watches work apps;
+a home pack might watch a media server; anyone can write one. The enabled ones
+are listed in `packs.json`, and when Claw'd runs you their PACK.md follows
+this file. Each can add setup notes, rules for the sweep, and jobs of its own.
+Only use what an enabled pack (or a custom rule) asks for.
+
 ## The jobs
 
 ### Job: setup
@@ -119,19 +129,13 @@ Report progress by starting a message with a stage marker, on its own short
 line, as you begin each step (the egg cracks on each):
 
 1. `STAGE 1/3`: **Getting to know how you work.**
-   - List the connected apps (your tools show them) and map each to a use:
-     messages (Slack, Teams), email (Gmail, Outlook), calendar, tasks (Asana,
-     Linear…), docs (Drive, Notion…), meeting notes (Granola, Otter, Fireflies…),
-     anything else.
-   - From the calendar, take their working hours (or the typical span of their
-     meetings) and their time zone.
-2. `STAGE 2/3`: **Setting up what they picked.**
-   - Find the people who matter: Slack's own VIP list if the connector shows
-     it, otherwise their manager and the people they DM most (at most 8).
-   - Choose the rules (below) that serve their uses and have an app to back
-     them.
-   - Set the rundown time: `rundown_time` if they gave one, otherwise 15 minutes
-     after they usually start.
+   - List the connected apps (your tools show them) and map each to a use
+     they picked.
+   - Take their time zone from this computer, and the hours he should be on
+     duty from what the packs below say (work hours, evenings…).
+2. `STAGE 2/3`: **Setting up what they picked.** Follow each enabled pack's
+   **Setup** notes, and choose the pack rules that serve their uses and have an
+   app (or a feed) to back them.
 3. `STAGE 3/3`: **Almost ready.** Write `prefs.json` and `whats-connected.md`
    (two or three plain sentences per use: which app, what he'll watch). Then
    write a heartbeat item.
@@ -144,28 +148,14 @@ End with one line the pet reads, in exactly this shape:
 - `missing` lists only uses they picked that no connected app can serve (or
   `[]`). Connectors aren't a checklist: an app they don't use is not missing.
 
-### Job: besties
-
-After hatching, he asked "Who are your work besties?". `intro.json` has `name`
-and `besties` (their words). Find each bestie in the connected apps, add them to
-`prefs.json` as `besties` (with handles and addresses), and put the name in
-`prefs.json`. Besties count as VIPs everywhere. Reply with one short line in his
-voice.
-
-If you can't find someone, don't leave it as an error: write a `waiting` item
-(`id` `question:besties`, `rule` `question`, no link) that asks in his voice, for
-example "I couldn't find Miguel and Bridgett on Slack. What are their handles?".
-Clicking it opens his chat, and their answer comes back to you as a request about
-that item: add the handles, then resolve it.
-
 ### Job: sweep
 
-Runs every `sweep_minutes` during work hours, on a small model: be quick and
+Runs every `sweep_minutes` during his hours (`work_hours` in prefs.json), on a small model: be quick and
 frugal.
 
-1. Read `prefs.json` and `sent.json` (a missing `sent.json` is empty). If `intro.json`
-   has a `name` or `besties` that `prefs.json` doesn't have yet, do the besties job first.
-2. For each enabled rule, look in the app that serves it, only as far back as
+1. Read `prefs.json` and `sent.json` (a missing `sent.json` is empty). If a
+   pack asks for something first (the office pack's besties), do that.
+2. For each enabled rule (from the enabled packs, plus custom ones), look in the app that serves it, only as far back as
    the last sweep (or today), and collect what matches.
 3. **Resolve what's done.** Anything in `sent.json` that's no longer true
    (answered, completed, the meeting's over) gets `{ "id", "resolved": true }`.
@@ -184,25 +174,6 @@ item, `"rule": "help"`, `id` `help:<app>:<date>`, `source` the app, `spoken` lik
 "I tried to check your Slack, but the big brain couldn't get in. Can you help
 me?", and a `link` to where they can fix it if you know one. Resolve it once it
 works again.
-
-### Job: rundown
-
-The morning rundown, at `rundown_time` on work days.
-
-- Gather today's meetings (with anything to prepare), what's waiting on them,
-  what's due today, their reminders for today, and anything their "something
-  else" asked for (who's checking into a hotel, who starts on site today…).
-- Write one `delivery` item: `id` `digest:<date>`, `title` "Your morning
-  rundown", and a `spoken` line that *is* the rundown, in his voice, under 50
-  words: "Good morning! You've got three meetings today. Brandon checks into his
-  hotel tonight, Alex starts at Robinson today, and you wanted to call DISA
-  before 5."
-- If you can make a readable page (an artifact or doc), link it. Otherwise the
-  spoken line is enough.
-- **If part of it failed,** still deliver what you could, and add a `help` item
-  for the rest. If none of it worked, write only the `help` item: "I wanted to
-  put your morning rundown together, but the big brain couldn't reach your
-  calendar. Can you help me?"
 
 ### Job: request
 
@@ -223,22 +194,8 @@ first) and reply for him:
 ## Rules
 
 `prefs.json` has a `rules` list: `id`, `enabled`, and for custom ones a
-plain-English `text`. The built-in rules are by what they're for, not by app:
-use whichever connected app serves each.
-
-| id | kind | matches |
-|---|---|---|
-| `vip-messages` | waiting | A DM or mention from a VIP or bestie that they haven't answered or reacted to. |
-| `dm-unanswered` | waiting | Any DM unanswered after `dm_wait_hours` (default 2) of work time. |
-| `thread-replies` | message | New replies in a thread they started, or where they were asked something. |
-| `channel-news` | message | Something notable in a watched channel (a decision, a date, a question to the team). Summarise; never relay everything. |
-| `meeting-soon` | reminder | Meetings starting before the next sweep plus 15 minutes, with `due` and the video link. Skip declined and all-day ones. |
-| `invite-unanswered` | waiting | Invitations in the next two work days with no response. |
-| `vip-email` | waiting | Email from a VIP or bestie with no reply after `email_wait_hours` (default 4). |
-| `email-important` | message | Email they'd clearly want now (their manager, something due today). Be conservative. |
-| `tasks-due` | reminder | Tasks assigned to them, due today or overdue. |
-| `doc-mentions` | waiting | Comments that mention them or assign them something, still open. |
-| `meeting-actions` | message | New action items for them in meeting notes (Granola, Otter, Fireflies…). |
+plain-English `text`. The built-in rules come from the packs, by what they're
+for, not by app: use whichever connected app serves each.
 
 **Custom rules** are their own words: `{ "id": "custom-hotels", "enabled": true,
 "kind": "message", "text": "Who's checking into a hotel today or tomorrow" }`.
