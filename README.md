@@ -2,13 +2,19 @@
 
 *A crab. A robot. A very small coworker.*
 
-Claw'd sits on top of your windows and keeps an eye on your work for you: a VIP's
-Slack message, a meeting you're about to be late for, an email that's been waiting,
-the morning digest. He reads it to you, hops until you look, and nudges when
-something has sat too long. Hover him and press **+** to hand Claude a task.
+Claw'd lives on your taskbar and keeps an eye on things for you. At work: a VIP's
+Slack message, a meeting you're about to be late for, an email that's been
+waiting, the morning rundown. At home: your Claude Code sessions, a new episode
+on Plex, the garage left open. He tells you out loud, hops until you look, and
+nudges when something has sat too long. Ask him for things in his chat.
 
-He's the office-worker sibling of [Claw'dbot](https://github.com/NatMarino/clawdbot),
-the pet that watches Claude Code sessions. Same crab, different job.
+**Start here: [docs/STATUS.md](docs/STATUS.md)**, what's built, how it works,
+and where each piece of work lives. What he's *for* comes from **packs**
+(office, home, dev, or your own). The personal version's next steps are in
+[docs/personal-proposal.md](docs/personal-proposal.md).
+
+He grew out of [Claw'dbot](https://github.com/NatMarino/clawdbot), the pet that
+watches Claude Code sessions. Same crab; that job is now his dev pack.
 
 ![Claw'd napping](docs/clawdbot-sleeping.gif)
 
@@ -32,14 +38,15 @@ Your apps ──(your Claude's connectors)──▶ Claude, on a schedule
                      shows it · says it · reminds · nudges · hands tasks back
 ```
 
-When you ask him for something, or press **Do it** on one of Claude's suggestions,
-he opens Claude with the request already written. Claude does the work, where you
-can see it.
+When you ask him for something in his chat, the big brain does it in the
+background while he types on his little laptop, and he tells you when it's done.
+Bigger things (a doc, a report) he hands to a Claude chat you can watch.
 
 **Nothing goes to another person without your tap.** In **auto** (the default)
-he does what you ask right away, but an email, a Slack message or an invite
-shows you the draft first, with **Send**. The gear's **ask me first** mode makes
-him propose everything. Nothing is ever sent by a scheduled check.
+he does what you ask right away, but every message for someone starts as a
+draft card: **Love it**, **Don't like it** or **Revise**, then **Send it** or
+**Copy it**. The gear's **ask me first** mode makes him propose everything.
+Nothing is ever sent by a scheduled check.
 
 **Windows 11 and macOS 11+.** Download the latest from
 [Releases](https://github.com/NatMarino/clawd-assistant/releases): the
@@ -54,10 +61,14 @@ Terminal, then open him again:
 
 ## Setting it up
 
-Give [SETUP.md](SETUP.md) to Claude and say "set this up". It checks your
-connections, walks you through installing the pet, asks who your VIPs are and
-when you work, and schedules the checks. The same file works for anyone: nothing
-in it is tied to the person who sent it.
+Install him and click the egg: he sets himself up, running the big brain
+(Claude Code) himself. You need the Claude app installed and signed in, or
+Claude Code. He asks where he's living (a work computer, your own, or both)
+and what you'd like help with, then works out the rest from your connected
+apps while the egg cracks.
+
+For a computer where he can't run the big brain, [SETUP.md](SETUP.md) is the
+fallback: give it to Claude (Cowork) and say "set this up".
 
 ## Using it
 
@@ -65,11 +76,16 @@ in it is tied to the person who sent it.
   you'd like his help with, then the big brain (Claude Code, which he runs
   himself in the background) works out the rest from your connected apps while
   the egg cracks. You click the last crack to hatch him, and he asks your name
-  and your work besties. (The tray's *Start over* puts him back in his egg.)
+  (and, on a work computer, your work besties). (The tray's *Start over* puts
+  him back in his egg.)
+- **Packs** (gear → *packs*): **office** (work apps), **home** (Plex, Sonarr,
+  Radarr, Overseerr, Home Assistant: [docs/home-setup.md](docs/home-setup.md)),
+  **dev** (your Claude Code sessions: working, thinking, needs you, done).
+  Write your own: [docs/packs.md](docs/packs.md).
 - **His requests chat (+):** ask him anything. He types on his little laptop
   while the big brain works, and tells you when it's done. In **auto** (the
-  default) he just does it; anything that goes to another person shows you the
-  draft first, with **Send it**.
+  default) he just does it; anything that goes to another person comes back as
+  a draft card first.
 - **He lives on your taskbar** (on a Mac, on the Dock). His home is just left
   of the clock (on a Mac, near the right end). When nothing
   needs you he tucks in behind the taskbar with his eyes peeking over, looks up
@@ -139,19 +155,18 @@ open http://localhost:4870, and press **demo inbox** in the debug panel.
 
 ## Status and art
 
-**Drawn, on both skins:** reading a letter (it arrives, he opens it, then reads
-it out), a pocket watch for meetings, a parcel for deliveries, a happy wiggle
-when clicked, a celebration when the list is cleared, peeking up from behind
-the taskbar, and a walk cycle. They come from Nat's animation series, converted
-by `tools/import-sheets.js` (the CLI letter is shrunk by
-`tools/letter-small.js`) into `src/sprites-office.js`:
+**Drawn, on both skins (Nat's animation series):** idle, eating a cookie, talking,
+hearts, mad, reading a letter, a pocket watch for meetings, a parcel for
+deliveries, a happy wiggle, a celebration, peeking up from behind the taskbar,
+and the scuttle (his walk). `tools/import-sheets.js` converts the pack (the CLI
+letter is shrunk by `tools/letter-small.js`) into `src/sprites-office.js`:
 
 ```bash
-node tools/import-sheets.js "<pack>/clawd-pet-sprites" "<pack>/clawd-walk-cycles"
+node tools/import-sheets.js "<pack>/clawd-pet-sprites"
 ```
 
 The walk moves him at the pace its stride is drawn for, so his feet don't
-slide. **Still a placeholder:** the Do-it hard hat.
+slide. **Still placeholders:** the egg and hatching, being held, and the tumble.
 
 ## Credits
 
