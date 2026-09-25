@@ -10,6 +10,8 @@ something has sat too long. Hover him and press **+** to hand Claude a task.
 He's the office-worker sibling of [Claw'dbot](https://github.com/NatMarino/clawdbot),
 the pet that watches Claude Code sessions. Same crab, different job.
 
+**Start here: [docs/STATUS.md](docs/STATUS.md)**: what's built, how it works, and where each piece of work lives. This branch (`main`) is the office Claw'd (v0.2 betas); the personal one (packs, coding sessions, home) is on the [`home`](https://github.com/NatMarino/clawd-assistant/tree/home) branch.
+
 ![Claw'd napping](docs/clawdbot-sleeping.gif)
 
 ## How it works

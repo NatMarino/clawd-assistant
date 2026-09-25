@@ -1,5 +1,9 @@
 # One Claw'd: office and dev modes
 
+> **Status (2026-09-25): superseded.** Office and dev became *packs* instead of a
+> toggle, and several can be on at once. The dev pack (Claude Code sessions
+> from hooks) is built on the `home` branch. See [STATUS.md](STATUS.md).
+
 Planned 2026-09-24, for right after v0.2.0 ships (before the voice, reminders,
 briefing and clipboard work in `v0.3-plan.md`, which moves back one release).
 

@@ -1,5 +1,11 @@
 # His voice, a smarter intake, and a secret personality
 
+> **Status (2026-09-25): built in v0.2.0-beta.11**: one mouth, the soft limiter,
+> cleaner animalese with its own pitch, the pillow-muffled egg, an intake built
+> from the connected apps (from the probe's list, with no extra big-brain job),
+> reactions to every answer, and the secret personalities. Later: animalese in
+> word groups. See [STATUS.md](STATUS.md).
+
 *A handoff. Nothing here is built yet. It comes from Nat's notes after
 hatching beta 9 (2026-09-24), and sits alongside `office-dev-plan.md` and
 `v0.3-plan.md` as future work. It could be the last polish before v0.2.0 ships,
